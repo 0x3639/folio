@@ -38,7 +38,7 @@ const EDITIONS: Record<string, string> = {
   package: "Linux package (updates via apt)",
 };
 
-export function AboutDialog({ onClose, onOpenSettings }: { onClose: () => void; onOpenSettings: () => void }) {
+export function AboutDialog({ onClose }: { onClose: () => void }) {
   const desktop = window.folioDesktop;
   const [info, setInfo] = useState<Awaited<ReturnType<FolioDesktop["getAppInfo"]>> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,14 +56,13 @@ export function AboutDialog({ onClose, onOpenSettings }: { onClose: () => void; 
       {info && <div><dt>Location</dt><dd className="installation-path">{info.location}</dd></div>}
     </dl>
     <div className="about-update">
-      <p>{desktop ? "Updates, appearance, and Ask AI accounts are in Settings." : "Documents and reading preferences stay on this device."}</p>
+      {!desktop && <p>Documents and reading preferences stay on this device.</p>}
       {info?.mode === "portable" && <p className="search-hint">Use the Setup installer for automatic updates and a single installed copy.</p>}
       {info?.mode === "package" && <p className="search-hint">New versions arrive with your system's software updates (apt).</p>}
       <div className="form-actions">
         {desktop && <button className="btn ghost" onClick={() => {
           void desktop.openInstallation().then(message => setError(message || null)).catch(() => setError("Couldn't open the installation folder."));
         }}>Open installation folder</button>}
-        {desktop && <button className="btn primary" onClick={onOpenSettings}>Settings</button>}
       </div>
       {error && <p className="form-error">{error}</p>}
     </div>

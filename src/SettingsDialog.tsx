@@ -101,6 +101,7 @@ export function SettingsDialog({ theme, onTheme, night, onNight, wheelPaging, on
   return (
     <Modal title="Settings" onClose={onClose}>
       <div className="settings">
+        {desktop && <p className="search-hint">Manage updates, appearance, and Ask AI accounts.</p>}
         <Section title="Appearance">
           <Row label="Theme">
             <Choice label="Theme" value={theme === "dark" ? "dark" : "light"} onChange={onTheme}

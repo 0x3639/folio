@@ -205,6 +205,13 @@ try {
   assert.equal(readFileSync(copy, "latin1").match(/\/Subtype\s*\/Highlight\b/g)?.length, 2);
   console.log("ok  saved copy includes marks on pages not drawn yet");
 
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name: "About Folio" }).click();
+  const about = page.getByRole("dialog", { name: "About Folio" });
+  assert.doesNotMatch(await about.innerText(), /Ask AI accounts/);
+  assert.equal(await about.getByRole("button", { name: "Settings" }).count(), 0);
+  await page.keyboard.press("Escape");
+
   // The reader shortcut and Settings control the same saved PDF appearance.
   await page.getByRole("button", { name: "More" }).click();
   const darkMode = page.getByRole("menuitemcheckbox", { name: "PDF dark mode" });
@@ -214,6 +221,7 @@ try {
   await page.getByRole("button", { name: "More" }).click();
   assert.equal(await darkMode.getAttribute("aria-checked"), "true");
   await page.getByRole("menuitem", { name: /Settings/ }).click();
+  await page.getByRole("dialog", { name: "Settings" }).getByText(/Manage updates, appearance, and Ask AI accounts/).waitFor();
   const darkModeSwitch = page.getByRole("switch", { name: "PDF dark mode" });
   assert.equal(await darkModeSwitch.getAttribute("aria-checked"), "true");
   await darkModeSwitch.click();
