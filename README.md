@@ -73,11 +73,13 @@ URL opening, webpage conversion, and Word conversion require the desktop app. Fa
 - **Flexible views:** fit to width, fit to page, automatic sizing, preset zoom levels, zoom buttons, `Ctrl+wheel` /
   trackpad pinch, two-page spreads, and page rotation.
 - **Focus mode:** press `F` for distraction-free, fullscreen reading; press `Esc` to return.
-- **Light and dark themes**, plus an independent **Night reading** setting that dims bright pages while keeping
+- **Light and dark themes**, plus an independent **⋯ → PDF dark mode** setting that dims bright pages while keeping
   photos and figures in their original colors, including in thumbnails. Both settings survive restarts.
 
 ### Highlight, draw, and take notes
 
+- **Select text in scans.** Folio recognizes English text on image-only pages as you read. After “Recognizing text…”
+  clears, drag across the words to copy, highlight, or ask about a passage. Recognition runs offline.
 - **One-click highlights:** select text, then choose yellow, green, blue, pink, or red from the selection toolbar;
   `H` applies the current highlight color.
 - **Notes on passages:** type into the selection toolbar and press `Enter` to highlight with a note, or press `N`
@@ -190,9 +192,8 @@ On macOS, use `⌘` wherever this table says `Ctrl`. Press `?` with a document o
 
 ### Current limits
 
-- Folio annotates PDFs; it does not edit their original text/layout, merge or reorder pages, or provide OCR.
-- Search, text selection, signature-label detection, and Ask AI depend on an existing PDF text layer. Image-only scans
-  can still be viewed, drawn on, and signed, but do not gain searchable text automatically.
+- Automatic OCR adds a selection layer in the reader. The source PDF stays intact. Document-wide search,
+  signature-label detection, and whole-document AI questions use the PDF’s embedded text.
 - Ask AI uses extracted text, not page images, and includes up to about 400,000 characters of document text. Long
   documents may be truncated; AI answers can be wrong, so check the cited pages.
 - Folio opens PDFs up to 300 MiB and 10,000 pages. Webpage conversion uses a separate session, so pages behind a

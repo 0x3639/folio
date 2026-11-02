@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.0
+
+- Select, copy, and highlight English text on scanned pages in the PDF you already have open. Folio runs OCR
+  on your device as those pages come into view, even offline.
+- Open **⋯ → PDF dark mode** to dim the pages while keeping photos and figures in color.
+
 ## 1.11.0
 
 - Turn on **Scroll one page at a time** in Settings to turn pages with each mouse wheel click or trackpad swipe.

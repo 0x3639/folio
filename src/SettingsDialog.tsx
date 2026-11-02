@@ -106,8 +106,8 @@ export function SettingsDialog({ theme, onTheme, night, onNight, wheelPaging, on
             <Choice label="Theme" value={theme === "dark" ? "dark" : "light"} onChange={onTheme}
               options={[{ id: "light", name: "Light" }, { id: "dark", name: "Dark" }]} />
           </Row>
-          <Row label="Night reading" hint="Dims bright pages for reading in the dark. Images keep their colors.">
-            <Switch label="Night reading" checked={night} onChange={onNight} />
+          <Row label="PDF dark mode" hint="Dims bright pages for night reading. Images keep their colors.">
+            <Switch label="PDF dark mode" checked={night} onChange={onNight} />
           </Row>
         </Section>
 

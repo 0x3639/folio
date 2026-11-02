@@ -21,6 +21,7 @@ import { MarkupController, type Mark, type MarkupState } from "./markup";
 import { HighlightMenu, NoteBox, SelectionPopover, useTextSelection, type SelectionInfo } from "./Selection";
 import { NotesPanel } from "./NotesPanel";
 import { imageRegions, trackPageImages } from "./nightImages";
+import { recognizeScannedPages } from "./pageOcr";
 import { ImageMenu, ImageViewer, type ImageTarget } from "./ImageViewer";
 import { MoreMenu, type MoreItem } from "./MoreMenu";
 import { keys } from "./platform";
@@ -225,6 +226,7 @@ export default function App() {
     linkRef.current = linkService;
 
     eventBus.on("pagesinit", () => {
+      recognizeScannedPages(eventBus, viewer);
       restoringRef.current = true;
       const saved = restoreRef.current;
       if (wheelPagingRef.current) viewer.scrollMode = ScrollMode.PAGE;
@@ -875,7 +877,7 @@ export default function App() {
   useEffect(() => localStorage.setItem("folio:sidebar", sidebar ? "1" : "0"), [sidebar]);
   const setNightTo = (next: boolean) => {
     try { localStorage.setItem("folio:night", next ? "1" : "0"); }
-    catch { flash("Night reading changed, but couldn't save the preference."); }
+    catch { flash("PDF dark mode changed, but couldn't save the preference."); }
     setNight(next);
   };
 
@@ -1115,6 +1117,7 @@ export default function App() {
                     { kind: "action", icon: "print", label: "Print", shortcut: keys("Ctrl P"), onSelect: print },
                     { kind: "action", icon: "info", label: "Document info", onSelect: () => setDialog("info") },
                     { kind: "divider" },
+                    { kind: "toggle", icon: "moon", label: "PDF dark mode", checked: night, onSelect: () => setNightTo(!night) },
                     { kind: "action", icon: "expand", label: "Focus mode", shortcut: "F", onSelect: toggleFocus },
                   ] as MoreItem[])
                 : []),

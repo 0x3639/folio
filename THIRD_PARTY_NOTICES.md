@@ -8,6 +8,7 @@ they cover, and Electron's and Chromium's licenses are in the app's installation
 | Component | License | Source |
 | --- | --- | --- |
 | [pdf.js](https://github.com/mozilla/pdf.js) (`pdfjs-dist`) | Apache-2.0 | Mozilla Foundation |
+| [Tesseract.js](https://github.com/naptha/tesseract.js), its WebAssembly core and [English recognition model](https://github.com/tesseract-ocr/tessdata_best) | Apache-2.0, worker dependency notices in `ocr/worker.min.js.LICENSE.txt` | Tesseract.js and Tesseract OCR contributors |
 | pdf.js JBIG2 decoder (from PDFium) | BSD-3-Clause | The PDFium Authors |
 | pdf.js OpenJPEG decoder | BSD-2-Clause | OpenJPEG contributors |
 | pdf.js qcms color management | MIT | Mozilla Corporation, Marti Maria |

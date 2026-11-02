@@ -23,7 +23,7 @@ const env = { ...process.env, FOLIO_TEST_USER_DATA: mkdtempSync(path.join(tmpdir
 delete env.ELECTRON_RUN_AS_NODE;
 // Containers often run as root, where Chromium's sandbox can't start. The made-up names stand in for web addresses
 // that lead to this computer (see the local network checks below).
-const args = [root, "--host-resolver-rules=MAP folio-local.test 127.0.0.1, MAP folio-rebind.test 127.0.0.1, MAP folio-pinned.test 127.0.0.2",
+const args = [root, "--mute-audio", "--host-resolver-rules=MAP folio-local.test 127.0.0.1, MAP folio-rebind.test 127.0.0.1, MAP folio-pinned.test 127.0.0.2",
   ...(process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : [])];
 
 // The smallest .docx Word opens: one paragraph of `text`.
@@ -45,6 +45,7 @@ const app = await electron.launch({ executablePath, args, env, timeout: 60_000 }
 const failures = [];
 try {
   const page = await app.firstWindow();
+  assert.ok(await app.evaluate(({ app }) => app.commandLine.hasSwitch("mute-audio")));
   page.on("pageerror", (e) => failures.push(String(e)));
   await page.getByRole("button", { name: /Try a sample/ }).waitFor({ timeout: 30_000 });
 
@@ -204,9 +205,20 @@ try {
   assert.equal(readFileSync(copy, "latin1").match(/\/Subtype\s*\/Highlight\b/g)?.length, 2);
   console.log("ok  saved copy includes marks on pages not drawn yet");
 
-  // The More menu opens and closes.
+  // The reader shortcut and Settings control the same saved PDF appearance.
   await page.getByRole("button", { name: "More" }).click();
-  await page.getByRole("menuitem", { name: /About Folio/ }).waitFor();
+  const darkMode = page.getByRole("menuitemcheckbox", { name: "PDF dark mode" });
+  assert.equal(await darkMode.getAttribute("aria-checked"), "false");
+  await darkMode.click();
+  await page.locator(".app[data-night]").waitFor();
+  await page.getByRole("button", { name: "More" }).click();
+  assert.equal(await darkMode.getAttribute("aria-checked"), "true");
+  await page.getByRole("menuitem", { name: /Settings/ }).click();
+  const darkModeSwitch = page.getByRole("switch", { name: "PDF dark mode" });
+  assert.equal(await darkModeSwitch.getAttribute("aria-checked"), "true");
+  await darkModeSwitch.click();
+  await page.locator(".app:not([data-night])").waitFor();
+  assert.equal(await page.evaluate(() => localStorage.getItem("folio:night")), "0");
   await page.keyboard.press("Escape");
 
   // Settings links to the bundled changelog, and closing it returns to Settings.
