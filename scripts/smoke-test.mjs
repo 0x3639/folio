@@ -390,6 +390,18 @@ try {
   }
   console.log("ok  local network addresses need the user's OK");
 
+  // The question asked before closing over unsaved work names this platform's Save shortcut.
+  const closePrompt = await app.evaluate(({ BrowserWindow, dialog }) => {
+    const ask = dialog.showMessageBoxSync;
+    let detail = null;
+    dialog.showMessageBoxSync = (_window, options) => { detail = options.detail; return 1; };
+    try { BrowserWindow.getAllWindows()[0].webContents.emit("will-prevent-unload", { preventDefault() {} }); }
+    finally { dialog.showMessageBoxSync = ask; }
+    return detail;
+  });
+  assert.match(closePrompt, process.platform === "darwin" ? /⌘S/ : /Ctrl\+S/);
+  console.log("ok  the unsaved-work prompt shows this platform's Save shortcut");
+
   assert.deepEqual(failures, []);
   console.log(`PASS (${process.platform})`);
 } finally {

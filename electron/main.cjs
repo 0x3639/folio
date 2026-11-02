@@ -340,7 +340,7 @@ function createWindow() {
       cancelId: 1,
       title: "Unsaved annotations",
       message: "You have highlights or notes that haven't been saved.",
-      detail: "Press Ctrl+S in Folio to save a copy with your annotations.",
+      detail: `Press ${IS_MAC ? "⌘S" : "Ctrl+S"} in Folio to save a copy with your annotations.`,
     });
     if (choice === 0) e.preventDefault();
   });
