@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.1
+
+- On Windows, click **Restart** once to update. Folio shows a progress message and reopens the updated copy when installation finishes.
+
 ## 1.12.0
 
 - Select, copy, and highlight English text on scanned pages in the PDF you already have open. Folio runs OCR

@@ -72,6 +72,16 @@ jobs:
               -c.win.azureSignOptions.publisherName="$AZURE_SIGNING_PUBLISHER")
           fi
           npx electron-builder --win nsis portable "${extra[@]}" --publish never
+      - name: Old Folio cannot reopen during a Windows update
+        shell: pwsh
+        run: |
+          $nsis = node -e "require('app-builder-lib/out/toolsets/windows').getMakeNsisPath().then(x => console.log(JSON.stringify(x)))" | ConvertFrom-Json
+          $env:NSISDIR = $nsis.env.NSISDIR
+          $fixture = Join-Path $env:RUNNER_TEMP "test-windows-update.exe"
+          & $nsis.path /V2 "/DOUTFILE=$fixture" scripts/test-windows-update.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $test = Start-Process -FilePath $fixture -ArgumentList /S -WindowStyle Hidden -Wait -PassThru
+          exit $test.ExitCode
       - name: Packaged app starts (Windows)
         shell: pwsh
         run: |
