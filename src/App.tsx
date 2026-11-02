@@ -1215,7 +1215,7 @@ export default function App() {
                   onChange={(e) => setPageInput(e.target.value.replace(/\D/g, ""))}
                   onFocus={(e) => e.target.select()}
                   onBlur={() => setPageInput(String(pageRef.current))}
-                  style={{ width: `${Math.max(2, String(numPages).length) + 0.6}ch` }}
+                  style={{ width: `calc(${Math.max(2, String(numPages).length)}ch + 22px)` }}
                   aria-label="Page number"
                 />
                 <span className="page-total">of {numPages}</span>
