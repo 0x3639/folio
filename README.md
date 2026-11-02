@@ -78,8 +78,9 @@ URL opening, webpage conversion, and Word conversion require the desktop app. Fa
 
 ### Highlight, draw, and take notes
 
-- **Select text in scans.** Folio recognizes English text on image-only pages as you read. After “Recognizing text…”
-  clears, drag across the words to copy, highlight, or ask about a passage. Recognition runs offline.
+- **Select text in scans.** Folio starts recognizing English text in the background when you open a PDF.
+  The page you jump to gets priority. A message above the page controls shows when text is still being prepared.
+  Once it clears, drag across the words to copy, highlight, or ask about a passage. Recognition runs offline.
 - **One-click highlights:** select text, then choose yellow, green, blue, pink, or red from the selection toolbar;
   `H` applies the current highlight color.
 - **Notes on passages:** type into the selection toolbar and press `Enter` to highlight with a note, or press `N`

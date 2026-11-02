@@ -48,21 +48,58 @@ async function checkScanSelection(app, page) {
   const draw = "q 0 400 -200 0 220 30 cm /Scan Do Q";
   const native = draw + "\nBT /F 12 Tf 30 50 Td (Embedded text) Tj ET";
   const pageDict = "/Type /Page /Parent 2 0 R /MediaBox [20 30 220 430] /Rotate 90 /UserUnit 1.25";
-  const resources = "/Resources << /XObject << /Scan 5 0 R >> /Font << /F 8 0 R >> >>";
+  const resources = scan => `/Resources << /XObject << /Scan ${scan} 0 R >> /Font << /F 8 0 R >> >>`;
+  const imageObject = kind => `<< /Type /XObject /Subtype /Image /Width 1000 /Height 500 ${kind} /BitsPerComponent 1 /Filter [/ASCIIHexDecode /FlateDecode] /Length ${image.length} >>\nstream\n${image}\nendstream`;
   const pdf = testPdf([
-    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>",
-    `<< ${pageDict} ${resources} /Contents 6 0 R >>`, `<< ${pageDict} ${resources} /Contents 7 0 R >>`,
-    `<< /Type /XObject /Subtype /Image /Width 1000 /Height 500 /ImageMask true /BitsPerComponent 1 /Filter [/ASCIIHexDecode /FlateDecode] /Length ${image.length} >>\nstream\n${image}\nendstream`,
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 5 /Kids [4 0 R 3 0 R 9 0 R 11 0 R 12 0 R] >>",
+    `<< ${pageDict} ${resources(5)} /Contents 6 0 R >>`, `<< ${pageDict} ${resources(5)} /Contents 7 0 R >>`,
+    imageObject("/ColorSpace /DeviceGray"),
     ...[draw, native].map(s => `<< /Length ${s.length} >>\nstream\n${s}\nendstream`),
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< ${pageDict} ${resources(10)} /Contents 6 0 R >>`, imageObject("/ImageMask true"),
+    `<< ${pageDict} ${resources(5)} /Contents 6 0 R >>`, `<< ${pageDict} ${resources(5)} /Contents 6 0 R >>`,
   ]);
+  // Hold OCR at the worker boundary so queue priority and loading messages are independent of CPU speed.
+  await page.evaluate(() => {
+    const post = Worker.prototype.postMessage;
+    let jobs = 0;
+    Worker.prototype.postMessage = function (message, ...rest) {
+      if (message?.action !== "recognize") return post.call(this, message, ...rest);
+      window.ocrJob = ++jobs;
+      window.resumeOcr = () => post.call(this, message, ...rest);
+      if (jobs === 4) {
+        Worker.prototype.postMessage = post;
+        window.failOcr = () => this.dispatchEvent(new MessageEvent("message", {
+          data: { action: "recognize", jobId: message.jobId, status: "reject", data: "Test recognition failure" },
+        }));
+      }
+    };
+  });
   await app.evaluate(({ BrowserWindow }, pdf) => BrowserWindow.getAllWindows()[0].webContents.send(
     "folio:open-file", { name: "Mixed scan.pdf", data: Buffer.from(pdf) }), pdf);
   await page.waitForFunction(() => document.title.startsWith("Mixed scan.pdf"));
-  const scan = page.locator('.page[data-page-number="1"]');
+  const scan = page.locator('.page[data-page-number="2"]');
+  const pageNumber = page.getByLabel("Page number");
+  const goTo = async n => { await pageNumber.fill(String(n)); await pageNumber.press("Enter"); };
+  const status = page.locator(".page-text-status");
+  const waitForJob = n => page.waitForFunction(n => window.ocrJob === n, n, { timeout: 45_000 });
+  await waitForJob(1);
+  assert.equal(await pageNumber.inputValue(), "1");
+  const mixed = page.locator('.page[data-page-number="1"] .textLayer');
+  await mixed.getByText("Embedded text", { exact: true }).waitFor();
+  assert.equal((await mixed.innerText()).trim(), "Embedded text");
+  await goTo(2);
+  await status.filter({ hasText: "Recognizing text on page 2…" }).waitFor();
+  await page.evaluate(() => window.resumeOcr());
   const firstWord = scan.locator(".textLayer span", { hasText: /^Select\s*$/ });
   await firstWord.waitFor({ timeout: 45_000 });
+  await waitForJob(2); // Page 3 is already being recognized while the reader is still on page 2.
+  assert.equal(await pageNumber.inputValue(), "2");
+  assert.equal(await status.innerText(), "");
   await page.getByTitle(/^Zoom in/).click();
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "PDF dark mode" }).click();
+  await scan.locator(".canvasWrapper > .folio-image-overlay").waitFor();
   await firstWord.scrollIntoViewIfNeeded();
   const box = await scan.locator(".canvasWrapper").boundingBox();
   const first = await firstWord.boundingBox();
@@ -70,19 +107,38 @@ async function checkScanSelection(app, page) {
   assert.ok(Math.abs(first.x - box.x - box.width * 0.1) < box.width * 0.01);
   assert.ok(Math.abs(last.x + last.width - box.x - box.width * right / 1000) < box.width * 0.01);
   const y = box.y + box.height * 205 / 500;
-  await page.mouse.move(first.x + 2, y);
+  const clip = { x: Math.ceil(first.x + 2), y: Math.floor(y - 2), width: Math.floor(first.width / 2), height: 4 };
+  const unselected = await page.screenshot({ clip });
+  // Readers often drag from just before the first letter to just past the last.
+  await page.mouse.move(first.x - 5, y);
   await page.mouse.down();
-  await page.mouse.move(last.x + last.width - 2, y, { steps: 12 });
+  await page.mouse.move(last.x + last.width + 5, y, { steps: 12 });
+  await page.waitForFunction(() => getSelection().toString().trim() === "Select these words");
+  assert.ok(!unselected.equals(await page.screenshot({ clip })), "the scan hid the live selection in PDF dark mode");
   await page.mouse.up();
   await page.getByRole("dialog", { name: "Selected text" }).waitFor();
   assert.equal((await page.evaluate(() => getSelection().toString())).trim(), "Select these words");
   await page.getByRole("button", { name: "Highlight yellow" }).click();
   await scan.locator(".highlightEditor").waitFor();
-  await page.getByTitle("Next page").click();
-  const mixed = page.locator('.page[data-page-number="2"] .textLayer');
-  await mixed.getByText("Embedded text", { exact: true }).waitFor();
-  assert.equal((await mixed.innerText()).trim(), "Embedded text");
-  console.log("ok  an image-only page gains selectable, highlightable text at the scanned coordinates");
+  await goTo(5);
+  await status.filter({ hasText: "Preparing text on page 5…" }).waitFor();
+  await page.evaluate(() => window.resumeOcr());
+  await waitForJob(3);
+  assert.equal(await status.innerText(), "Recognizing text on page 5…");
+  await page.evaluate(() => window.resumeOcr());
+  await page.locator('.page[data-page-number="5"] .ocr-word').first().waitFor();
+  assert.equal(await status.innerText(), "");
+  await goTo(3);
+  await page.locator('.page[data-page-number="3"] .textLayer').getByText("Select", { exact: true }).waitFor();
+  await waitForJob(4);
+  await goTo(4);
+  await page.evaluate(() => window.failOcr());
+  await status.filter({ hasText: "Text unavailable on page 4." }).waitFor();
+  await goTo(3);
+  await goTo(4);
+  await page.locator('.page[data-page-number="4"] .ocr-word').first().waitFor();
+  assert.equal(await status.innerText(), "");
+  console.log("ok  background OCR prepares unvisited scans, prioritizes page jumps, and shows selectable text in dark mode");
 }
 
 async function captureDownload(app, file) {

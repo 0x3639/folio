@@ -85,8 +85,10 @@ function addWords(view: PDFPageView, words: Word[]) {
   const end = layer?.querySelector(":scope > .endOfContent");
   if (!end || layer?.textContent.trim()) return;
   const fragment = document.createDocumentFragment();
+  let lineStart = true;
   for (const word of words) {
     const span = document.createElement("span");
+    span.className = lineStart ? "ocr-word ocr-line-start" : "ocr-word";
     span.textContent = word.text + (word.endOfLine ? "" : " ");
     span.style.left = `${word.left}%`;
     span.style.top = `${word.top}%`;
@@ -96,77 +98,160 @@ function addWords(view: PDFPageView, words: Word[]) {
     span.style.setProperty("--rotate", `${-view.pdfPage.rotate}deg`);
     fragment.append(span);
     if (word.endOfLine) fragment.append(document.createElement("br"));
+    lineStart = word.endOfLine;
   }
   end.before(fragment);
 }
 
-/** One lazy worker per open document. Only visible scans enter the recognition queue. */
-export function recognizeScannedPages(bus: EventBus, viewer: PDFViewer) {
+/** Consume the stream one chunk at a time without retaining a whole page's text and fonts. */
+async function hasEmbeddedText(page: PDFPageProxy, signal: AbortSignal) {
+  const reader = page.streamTextContent().getReader();
+  let found = false;
+  try {
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) return found;
+      found ||= value.items.some((item: { str?: string }) => item.str?.trim());
+    }
+    throw signal.reason;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** Prepare the document sequentially, giving the reader's current page and its successor the next turns. */
+export function recognizeScannedPages(bus: EventBus, viewer: PDFViewer, onStatus: (text: string | null) => void) {
+  const pdf = viewer.pdfDocument!;
   const controller = new AbortController();
   const { signal } = controller;
-  const cache = new Map<PDFPageView, Word[]>();
-  const candidates = new WeakMap<Element, PDFPageView>();
-  const visible = new Set<PDFPageView>();
-  let active: PDFPageView | undefined;
+  const pending = new Set(Array.from({ length: pdf.numPages }, (_, i) => i + 1));
+  // Keep small documents ready for the entire session. On huge scans, evicted pages can be read again on demand.
+  const cache = new Map<number, Word[]>();
+  const evicted = new Set<number>();
+  const notices = new Map<number, "noWords" | "ocrError" | "layerError">();
+  let nextPage = viewer.currentPageNumber;
+  let cachedWords = 0;
+  let active = 0;
+  let recognizing = false;
+  let timer: number | undefined;
   let worker: Promise<OcrWorker> | undefined;
+  let workerStartFailed = false;
 
-  async function drain() {
-    if (active || signal.aborted) return;
-    for (const view of visible) {
-      visible.delete(view);
-      observer.unobserve(view.div);
-      if (!view.textLayer?.div.isConnected) continue;
-      active = view;
-      try {
-        let words: Word[] = [];
-        if (await hasPageImage(view.pdfPage)) {
-          signal.throwIfAborted();
-          view.div.dataset.ocrStatus = "Recognizing text…";
-          worker ??= startWorker().catch(error => { worker = undefined; throw error; });
-          words = await readWords(view.pdfPage, await worker, signal);
-        }
-        signal.throwIfAborted();
-        if (cache.size >= 32) cache.delete(cache.keys().next().value!);
-        cache.set(view, words);
-        addWords(view, words);
-        delete view.div.dataset.ocrStatus;
-      } catch (error) {
-        if (!signal.aborted) {
-          view.div.dataset.ocrStatus = "Text recognition unavailable";
-          console.warn("Page OCR failed", error);
-        }
-      } finally {
-        active = undefined;
-      }
-      if (signal.aborted) return;
+  function updateStatus() {
+    const n = viewer.currentPageNumber;
+    const view: PDFPageView = viewer.getPageView(n - 1);
+    const layer = view.textLayer?.div;
+    if (layer?.isConnected && !layer.hidden && layer.textContent.trim()) onStatus(null);
+    else if (notices.get(n) === "noWords") onStatus(`No readable text found on page ${n}.`);
+    else if (notices.has(n)) onStatus(`Text unavailable on page ${n}.`);
+    else if (active === n && recognizing) onStatus(`Recognizing text on page ${n}…`);
+    else if (pending.has(n) || active === n || !layer?.isConnected || layer.hidden || !layer.querySelector(".endOfContent")) {
+      onStatus(`Preparing text on page ${n}…`);
+    } else onStatus(null);
+  }
+
+  function remember(n: number, words: Word[]) {
+    cache.set(n, words);
+    cachedWords += words.length;
+    for (const [old, entry] of cache) {
+      if (cachedWords <= 100_000) break;
+      if (old === n || Math.abs(old - viewer.currentPageNumber) <= 1) continue;
+      cache.delete(old);
+      cachedWords -= entry.length;
+      evicted.add(old);
     }
   }
 
-  const observer = new IntersectionObserver(entries => {
-    for (const entry of entries) {
-      const view = candidates.get(entry.target);
-      if (!view) continue;
-      if (entry.isIntersecting) visible.add(view);
-      else visible.delete(view);
+  function schedule() {
+    if (!signal.aborted && !active && timer === undefined && pending.size) {
+      timer = window.setTimeout(prepareNext, 0);
     }
-    void drain();
-  }, { root: viewer.container });
+  }
 
-  bus.on("textlayerrendered", ({ source: view, error }: { source: PDFPageView; error: unknown }) => {
-    const layer = view.textLayer?.div;
-    if (error || !layer || !view.pdfPage || layer.textContent.trim() || active === view) return;
-    const words = cache.get(view);
-    if (words) addWords(view, words);
-    else {
-      candidates.set(view.div, view);
-      observer.observe(view.div);
+  async function prepareNext() {
+    timer = undefined;
+    if (!pending.size || signal.aborted) return;
+    // Start at the last jump, continue ahead of the reader, then wrap back to the beginning.
+    while (!pending.has(nextPage)) nextPage = nextPage % pdf.numPages + 1;
+    const n = nextPage;
+    nextPage = n % pdf.numPages + 1;
+    pending.delete(n);
+    active = n;
+    const view: PDFPageView = viewer.getPageView(n - 1);
+    let page: PDFPageProxy | undefined;
+    try {
+      page = await pdf.getPage(n);
+      signal.throwIfAborted();
+      if (await hasEmbeddedText(page, signal)) return;
+      signal.throwIfAborted();
+      if (!(await hasPageImage(page))) return;
+      signal.throwIfAborted();
+      if (n !== viewer.currentPageNumber && pending.has(viewer.currentPageNumber)) {
+        pending.add(n);
+        return;
+      }
+      recognizing = true;
+      if (n === viewer.currentPageNumber) updateStatus();
+      worker ??= startWorker().catch(error => { workerStartFailed = true; throw error; });
+      const words = await readWords(page, await worker, signal);
+      signal.throwIfAborted();
+      if (words.length) {
+        remember(n, words);
+        addWords(view, words);
+      } else {
+        notices.set(n, "noWords");
+      }
+    } catch (error) {
+      if (!signal.aborted) {
+        notices.set(n, "ocrError");
+        console.warn("Page OCR failed", error);
+      }
+    } finally {
+      active = 0;
+      recognizing = false;
+      if (!signal.aborted) {
+        // Background renders aren't in the viewer's page buffer, so it won't release their images for us.
+        if (!viewer.getCachedPageViews().has(view)) page?.cleanup();
+        if (n === viewer.currentPageNumber) updateStatus();
+        schedule();
+      }
     }
+  }
+
+  bus.on("textlayerrendered", ({ source: view, pageNumber: n, error }: { source: PDFPageView; pageNumber: number; error: unknown }) => {
+    if (error) {
+      notices.set(n, "layerError");
+      if (n === viewer.currentPageNumber) updateStatus();
+      return;
+    }
+    if (notices.get(n) === "layerError") notices.delete(n);
+    const words = cache.get(n);
+    if (words) addWords(view, words);
+    else if (evicted.delete(n)) pending.add(n);
+    else if (view.textLayer?.div.textContent.trim() && !view.textLayer.div.querySelector(".ocr-word")) pending.delete(n);
+    if (n === viewer.currentPageNumber) updateStatus();
+    schedule();
+  }, { signal });
+  bus.on("pagechanging", ({ pageNumber }: { pageNumber: number }) => {
+    nextPage = pageNumber;
+    if (notices.get(pageNumber) === "ocrError") {
+      notices.delete(pageNumber);
+      if (workerStartFailed) { worker = undefined; workerStartFailed = false; }
+      if (pageNumber !== active) pending.add(pageNumber);
+    }
+    if (evicted.delete(pageNumber)) pending.add(pageNumber);
+    if (evicted.delete(pageNumber + 1)) pending.add(pageNumber + 1);
+    updateStatus();
+    schedule();
   }, { signal });
   bus.on("pagesdestroy", () => {
     controller.abort();
-    observer.disconnect();
-    visible.clear();
+    window.clearTimeout(timer);
     cache.clear();
+    pending.clear();
+    onStatus(null);
     void worker?.then(w => w.terminate()).catch(() => {});
   }, { once: true });
+  updateStatus();
+  schedule();
 }

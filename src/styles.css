@@ -487,19 +487,23 @@ kbd {
 .pdfViewer .page .canvasWrapper {
   border-radius: 2px;
 }
-.pdfViewer .page[data-ocr-status]::after {
-  content: attr(data-ocr-status);
+.page-text-status {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 5;
-  padding: 4px 8px;
-  border-radius: 6px;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9;
+  width: max-content;
+  max-width: 90%;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: var(--surface);
   color: var(--text);
-  font: 12px/1.4 system-ui, sans-serif;
+  font-size: 12px;
   pointer-events: none;
 }
+.page-text-status:empty { opacity: 0; }
 /* Only the page drawing is darkened; images are restored on top by an unfiltered overlay (nightImages.ts). */
 .app[data-night] .pdfViewer .page .canvasWrapper > canvas:not(.folio-image-overlay),
 .app[data-night] .thumb-frame canvas:not(.folio-image-overlay) {
@@ -511,6 +515,22 @@ kbd {
 }
 .app[data-night] .pdfViewer .page {
   background-color: #1e1e1e;
+}
+
+/* Let a drag start beside the scanned ink without enlarging the rectangles used for highlights. */
+.textLayer > .ocr-word::before,
+.textLayer > .ocr-word::after {
+  content: "";
+  position: absolute;
+  inset: -0.2em 50% -0.2em 0;
+  z-index: -1;
+}
+.textLayer > .ocr-word::after {
+  left: 50%;
+  right: -0.7em;
+}
+.textLayer > .ocr-line-start::before {
+  left: -0.7em;
 }
 
 /* Selection colours inside the text layer */

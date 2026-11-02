@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.12.2
+
+- Folio starts recognizing scanned text in the background when you open a PDF. Jumping to a page gives it priority.
+  A message above the page controls shows when its text is still being prepared.
+- Text selections stay visible on scans in **PDF dark mode**. You can start or end a drag just outside the printed words.
+- Three-digit page numbers fit in the page field, and the macOS unsaved-work prompt shows the Mac save shortcut.
+
 ## 1.12.1
 
 - On Windows, click **Restart** once to update. Folio shows a progress message and reopens the updated copy when installation finishes.

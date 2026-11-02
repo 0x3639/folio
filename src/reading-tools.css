@@ -647,6 +647,10 @@
 .app[data-night] .canvasWrapper > svg {
   z-index: 2;
 }
+/* The live text selection must also be visible over a full-page scan. */
+.app[data-night] .canvasWrapper > .selection {
+  z-index: 3;
+}
 .app[data-night] .canvasWrapper svg.highlight {
   --blend-mode: screen;
 }

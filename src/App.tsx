@@ -117,6 +117,7 @@ export default function App() {
   const [doc, setDoc] = useState<OpenDoc | null>(null);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  const [textStatus, setTextStatus] = useState<string | null>(null);
   const [pageInput, setPageInput] = useState("1");
   const [numPages, setNumPages] = useState(0);
   const [scale, setScale] = useState(1);
@@ -226,7 +227,6 @@ export default function App() {
     linkRef.current = linkService;
 
     eventBus.on("pagesinit", () => {
-      recognizeScannedPages(eventBus, viewer);
       restoringRef.current = true;
       const saved = restoreRef.current;
       if (wheelPagingRef.current) viewer.scrollMode = ScrollMode.PAGE;
@@ -239,6 +239,7 @@ export default function App() {
         viewer.scrollPageIntoView({ pageNumber: restoredPage, destArray: [null, { name: "XYZ" }, saved.left, saved.top, null] });
       }
       restoringRef.current = false;
+      recognizeScannedPages(eventBus, viewer, setTextStatus);
     });
     eventBus.on("updateviewarea", ({ location }: { location: { pageNumber: number; top: number; left: number } }) => {
       const current = docRef.current;
@@ -1166,6 +1167,7 @@ export default function App() {
           <div ref={containerRef} className="viewer-container" tabIndex={-1}>
             <div ref={innerRef} className="pdfViewer" />
           </div>
+          {doc && <div className="page-text-status" role="status">{textStatus}</div>}
 
           {doc && searchOpen && (
             <>
