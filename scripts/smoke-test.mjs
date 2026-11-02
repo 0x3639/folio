@@ -102,16 +102,28 @@ try {
   const sample = await page.evaluate(async () => Array.from(new Uint8Array(await (await fetch("sample.pdf")).arrayBuffer())));
   const openFromFileManager = () => app.evaluate(({ BrowserWindow }, data) =>
     BrowserWindow.getAllWindows()[0].webContents.send("folio:open-file", { name: "Another.pdf", data: Buffer.from(data) }), sample);
-  let prompt = page.waitForEvent("dialog");
+  // Answer in the renderer. Electron can show a native confirm dialog even when its window is off-screen.
+  const confirmation = await page.evaluateHandle(() => {
+    const original = window.confirm;
+    const messages = [];
+    window.confirm = message => {
+      messages.push(message);
+      return messages.length === 2; // Cancel the first open, then OK the second.
+    };
+    return { messages, restore: () => { window.confirm = original; } };
+  });
   await openFromFileManager();
-  await (await prompt).dismiss();
-  await page.waitForTimeout(500);
+  await page.waitForFunction(stub => stub.messages.length === 1, confirmation, { timeout: 15_000 });
+  assert.equal(await page.title(), "Folio sample.pdf — Folio");
   assert.equal(await page.locator(".stampEditor").count(), 1);
-  prompt = page.waitForEvent("dialog");
+  assert.ok(await page.locator(".dirty-dot").isVisible());
   await openFromFileManager();
-  await (await prompt).accept();
   await page.waitForFunction(() => document.title.startsWith("Another.pdf"), null, { timeout: 15_000 });
   await page.locator(".textLayer span:not(.markedContent)").first().waitFor({ timeout: 30_000 });
+  const warning = "You have unsaved changes. Open another document anyway?";
+  assert.deepEqual(await confirmation.evaluate(stub => stub.messages), [warning, warning]);
+  assert.equal(await page.locator(".stampEditor").count(), 0);
+  await confirmation.evaluate(stub => stub.restore());
   console.log("ok  opening another document asks before discarding unsaved work");
 
   // Select a sentence and highlight it in one click.
