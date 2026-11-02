@@ -89,7 +89,7 @@ jobs:
           Start-Sleep -Seconds 20
           if ($p.HasExited) { throw "Folio exited with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: folio-windows
           overwrite: true
@@ -135,7 +135,7 @@ jobs:
           sleep 20
           if ! kill -0 "$pid"; then cat app.log; exit 1; fi
           kill "$pid"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: folio-macos
           overwrite: true
@@ -170,7 +170,7 @@ jobs:
           sleep 20
           if ! pgrep -f linux-unpacked/folio > /dev/null; then cat app.log; exit 1; fi
           pkill -f linux-unpacked/folio
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: folio-linux
           overwrite: true
