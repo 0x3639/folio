@@ -185,13 +185,15 @@ try {
   const textLayer = page.locator('.page[data-page-number="1"] .textLayer.highlighting');
   await textLayer.waitFor();
   await page.getByRole("radio", { name: "Green" }).click();
-  const line = textLayer.getByText(/Drag a PDF file anywhere/);
-  await line.scrollIntoViewIfNeeded();
-  const box = await line.boundingBox();
-  const y = box.y + box.height / 2;
-  await page.mouse.move(box.x + 1, y);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width - 1, y, { steps: 8 });
+  const dragAcross = async line => {
+    await line.scrollIntoViewIfNeeded();
+    const box = await line.boundingBox();
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + 1, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 1, y, { steps: 8 });
+  };
+  await dragAcross(textLayer.getByText(/Drag a PDF file anywhere/));
   await page.waitForFunction(() => getSelection().toString().includes("Drag a PDF file anywhere"));
   const passage = await page.evaluate(() => getSelection().toString().trim());
   assert.equal(await page.locator(".highlightEditor").count(), 0);
@@ -211,22 +213,12 @@ try {
   assert.equal(await page.locator(".selection-popover").count(), 0);
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Select", pressed: true }).waitFor();
-  await page.getByRole("tab", { name: /Notes/ }).click();
-  for (const [quote, color] of [[passage, "#5edc9a"], ["The sidebar", "#ff8fc7"]]) {
-    const card = page.locator(".mark-card").filter({ hasText: quote });
-    assert.equal(await card.evaluate(el => el.style.getPropertyValue("--mark")), color);
-  }
-  await page.getByRole("tab", { name: /Pages/ }).click();
+  await textLayer.waitFor({ state: "detached" });
   console.log("ok  Highlight mode marks consecutive selections on release in the chosen color");
 
   // Select a sentence and highlight it in one click.
-  await page.evaluate(() => {
-    const span = [...document.querySelectorAll(".textLayer span:not(.markedContent)")].find((s) => s.textContent.includes("A short tour"));
-    const range = document.createRange();
-    range.selectNodeContents(span);
-    getSelection().removeAllRanges();
-    getSelection().addRange(range);
-  });
+  await dragAcross(page.locator('.page[data-page-number="1"] .textLayer').getByText(/A short tour of Folio/));
+  await page.mouse.up();
   await page.locator(".selection-popover").waitFor();
 
   // Copy puts the selection on the system clipboard (whose contents are put back afterwards). Clipboard writes
@@ -309,6 +301,13 @@ try {
   assert.equal(await app.evaluate(() => globalThis.folioCopySaved), "completed");
   assert.equal(readFileSync(copy, "latin1").match(/\/Subtype\s*\/Highlight\b/g)?.length, 4);
   console.log("ok  saved copy includes marks on pages not drawn yet");
+
+  await page.getByRole("tab", { name: /Notes/ }).click();
+  for (const [quote, color] of [[passage, "#5edc9a"], ["The sidebar", "#ff8fc7"]]) {
+    const card = page.locator(".mark-card").filter({ hasText: quote });
+    assert.equal(await card.evaluate(el => el.style.getPropertyValue("--mark")), color);
+  }
+  await page.getByRole("tab", { name: /Pages/ }).click();
 
   await page.getByRole("button", { name: "More" }).click();
   await page.getByRole("menuitem", { name: "About Folio" }).click();
