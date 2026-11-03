@@ -56,14 +56,15 @@ function UpdateLine({ status }: { status: UpdateStatus }) {
 }
 
 interface Props {
+  active: boolean;
   onPick: () => void;
   onOpenUrl: () => void;
-  onOpenBlob: (name: string, data: Blob) => Promise<boolean>;
+  onOpenRecent: (file: RecentFile) => void;
   onSample: () => void;
   loading: boolean;
 }
 
-export function Welcome({ onPick, onOpenUrl, onOpenBlob, onSample, loading }: Props) {
+export function Welcome({ active, onPick, onOpenUrl, onOpenRecent, onSample, loading }: Props) {
   const [recent, setRecent] = useState<RecentFile[]>([]);
   const [version, setVersion] = useState<string | null>(null);
 
@@ -75,13 +76,11 @@ export function Welcome({ onPick, onOpenUrl, onOpenBlob, onSample, loading }: Pr
   }, []);
 
   useEffect(() => {
-    listRecent().then(setRecent);
-  }, []);
-
-  // A stored blob that can't be read back is dead weight: drop the entry so it doesn't keep failing.
-  const reopen = async (f: RecentFile) => {
-    if (!await onOpenBlob(f.name, f.data)) await forget(f.id);
-  };
+    if (!active) return;
+    let cancelled = false;
+    void listRecent().then(files => { if (!cancelled) setRecent(files); });
+    return () => { cancelled = true; };
+  }, [active]);
 
   const forget = async (id: string) => {
     await removeRecent(id);
@@ -134,7 +133,7 @@ export function Welcome({ onPick, onOpenUrl, onOpenBlob, onSample, loading }: Pr
             </div>
             <div className="recent-grid">
               {recent.map((f) => (
-                <div key={f.id} className="recent-card" onClick={() => void reopen(f)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && void reopen(f)}>
+                <div key={f.id} className="recent-card" onClick={() => onOpenRecent(f)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onOpenRecent(f)}>
                   <div className="recent-thumb">
                     {f.thumb ? <img src={f.thumb} alt="" /> : <Icon name="file" size={28} />}
                     {f.lastPage > 1 && (

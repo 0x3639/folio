@@ -52,7 +52,7 @@ protocol.registerSchemesAsPrivileged([
 
 let win = null;
 const OPENABLE = /\.(pdf|docx?)$/i;
-let pendingFile = fileFromArgs(process.argv);
+const pendingFiles = filesFromArgs(process.argv);
 let rendererReady = false;
 
 // macOS hands files to the app through "open-file" (Finder, the Dock, "Open With") rather than argv.
@@ -61,22 +61,28 @@ app.on("open-file", (event, file) => {
   event.preventDefault();
   if (!OPENABLE.test(file)) return;
   if (win && rendererReady) {
-    if (win.isMinimized()) win.restore();
-    win.focus();
+    if (!TEST_HIDDEN) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
     void sendFile(file);
   } else {
-    pendingFile = file;
+    pendingFiles.push(file);
     if (app.isReady() && !win) createWindow();
   }
 });
 
-function fileFromArgs(argv) {
-  const file = argv.slice(1).find((a) => !a.startsWith("-") && OPENABLE.test(a) && fs.existsSync(a));
-  return file ? path.resolve(file) : null;
+function filesFromArgs(argv, cwd = process.cwd()) {
+  return argv.slice(1).filter(a => !a.startsWith("-") && OPENABLE.test(a))
+    .map(file => path.resolve(cwd, file)).filter(file => fs.existsSync(file));
 }
 
 // The read is async and size-capped like URL downloads: a huge file or a slow network
 // share shouldn't freeze the main process or balloon memory in two processes.
+async function sendFiles(files) {
+  for (const file of files) await sendFile(file);
+}
+
 async function sendFile(file) {
   const target = win;
   if (!file || !target) return;
@@ -95,12 +101,13 @@ async function sendFile(file) {
 async function sendWordFile(file, target) {
   const send = (channel, payload) => { if (!target.isDestroyed()) target.webContents.send(channel, payload); };
   const original = path.basename(file);
-  send("folio:converting", { name: original });
+  const token = crypto.randomUUID();
+  send("folio:converting", { name: original, token });
   try {
-    send("folio:open-file", await openWord(file, (msg) => logConvert(`${file}: ${msg}`)));
+    send("folio:open-file", { ...await openWord(file, (msg) => logConvert(`${file}: ${msg}`)), token });
   } catch (error) {
     logConvert(`${file}: ${error?.stack || error}`);
-    send("folio:open-failed", { message: `Couldn't convert “${original}” to PDF. ${error?.userMessage ?? ""}`.trim() });
+    send("folio:open-failed", { token, message: `Couldn't convert “${original}” to PDF. ${error?.userMessage ?? ""}`.trim() });
   }
 }
 
@@ -311,6 +318,17 @@ function createWindow() {
   win.on("resize", scheduleWindowSave);
   win.on("move", scheduleWindowSave);
   win.on("close", saveWindow);
+  // Native menu accelerators (especially Cmd+W on macOS) run before a DOM keydown.
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || input.alt) return;
+    let command;
+    if (input.control && input.key === "Tab") command = input.shift ? "previous" : "next";
+    else if (!input.shift && (IS_MAC ? input.meta : input.control)) {
+      if (input.key.toLowerCase() === "t") command = "new";
+      if (input.key.toLowerCase() === "w") command = "close";
+    }
+    if (command) { event.preventDefault(); win.webContents.send("folio:tab-command", command); }
+  });
   win.loadURL(DEV_URL ? DEV_URL + "/" : "app://folio/index.html");
 
   // Links inside PDFs open in the default browser, never in-app (see openLink).
@@ -338,9 +356,9 @@ function createWindow() {
       buttons: ["Close without saving", "Cancel"],
       defaultId: 1,
       cancelId: 1,
-      title: "Unsaved annotations",
-      message: "You have highlights or notes that haven't been saved.",
-      detail: `Press ${IS_MAC ? "⌘S" : "Ctrl+S"} in Folio to save a copy with your annotations.`,
+      title: "Unsaved changes",
+      message: "One or more tabs have unsaved changes.",
+      detail: `Press ${IS_MAC ? "⌘S" : "Ctrl+S"} in each marked tab to save a copy before closing Folio.`,
     });
     if (choice === 0) e.preventDefault();
   });
@@ -470,11 +488,18 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   // A second launch (e.g. double-clicking another PDF) hands its file to the running window.
-  app.on("second-instance", (_e, argv) => {
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-    void sendFile(fileFromArgs(argv));
+  app.on("second-instance", (_e, argv, cwd) => {
+    const files = filesFromArgs(argv, cwd);
+    if (!win || !rendererReady) {
+      pendingFiles.push(...files);
+      if (!win && app.isReady()) createWindow();
+      return;
+    }
+    if (!TEST_HIDDEN) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+    void sendFiles(files);
   });
 
   app.whenReady().then(() => {
@@ -502,15 +527,14 @@ if (!app.requestSingleInstanceLock()) {
 
     handle("folio:ready", () => {
       rendererReady = true;
-      const file = pendingFile;
-      pendingFile = null;
-      if (file) setTimeout(() => void sendFile(file), 0);
-      return !!file;
+      const files = pendingFiles.splice(0);
+      if (files.length) setTimeout(() => void sendFiles(files), 0);
+      return files.length > 0;
     });
     // Word documents picked or dropped in Folio (PDFs are read by the page itself).
     handle("folio:open-document", (_event, file) => {
       if (typeof file !== "string" || !WORD_FILE.test(file) || !path.isAbsolute(file)) throw new Error("Not a Word document");
-      void sendFile(file);
+      return openWord(file, (msg) => logConvert(`${file}: ${msg}`));
     });
     // PDF links open directly; webpages are converted to a PDF first. An address on this computer or the local
     // network opens only once the user agrees (cancelling resolves to { cancelled: true }).

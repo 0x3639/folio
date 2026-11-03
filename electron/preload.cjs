@@ -4,22 +4,27 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 contextBridge.exposeInMainWorld("folioDesktop", {
   /** Called with (name, data, note?) whenever a PDF is opened from Explorer, or a Word document has been converted. */
   onOpenFile(callback) {
-    const listener = (_e, file) => callback(file.name, new Uint8Array(file.data), file.note ?? undefined);
+    const listener = (_e, file) => callback(file.name, new Uint8Array(file.data), file.note ?? undefined, file.token);
     ipcRenderer.on("folio:open-file", listener);
     return () => ipcRenderer.removeListener("folio:open-file", listener);
   },
   /** Called with the file name when a Word document starts converting, and with a message if it fails. */
   onConverting(callback) {
-    const listener = (_e, file) => callback(file.name);
+    const listener = (_e, file) => callback(file.name, file.token);
     ipcRenderer.on("folio:converting", listener);
     return () => ipcRenderer.removeListener("folio:converting", listener);
   },
   onOpenFailed(callback) {
-    const listener = (_e, failure) => callback(failure.message);
+    const listener = (_e, failure) => callback(failure.message, failure.token);
     ipcRenderer.on("folio:open-failed", listener);
     return () => ipcRenderer.removeListener("folio:open-failed", listener);
   },
-  /** Converts a picked or dropped Word document; it arrives through onOpenFile. */
+  onTabCommand(callback) {
+    const listener = (_e, command) => callback(command);
+    ipcRenderer.on("folio:tab-command", listener);
+    return () => ipcRenderer.removeListener("folio:tab-command", listener);
+  },
+  /** Returns the converted PDF to the tab that opened the Word document. */
   openDocument: (file) => ipcRenderer.invoke("folio:open-document", webUtils.getPathForFile(file)),
   ready: () => ipcRenderer.invoke("folio:ready"),
   platform: process.platform,

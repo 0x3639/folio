@@ -9,6 +9,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { readerPage } from "./reader-page.mjs";
 import { checkReaderTools } from "./smoke-reader-tools.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -44,7 +45,7 @@ async function wordDocument(text) {
 const app = await electron.launch({ executablePath, args, env, timeout: 60_000 });
 const failures = [];
 try {
-  const page = await app.firstWindow();
+  const page = readerPage(await app.firstWindow());
   assert.ok(await app.evaluate(({ app }) => app.commandLine.hasSwitch("mute-audio")));
   page.on("pageerror", (e) => failures.push(String(e)));
   await page.getByRole("button", { name: /Try a sample/ }).waitFor({ timeout: 30_000 });
@@ -58,8 +59,7 @@ try {
   assert.match(await page.locator(".textLayer").first().innerText(), /A short tour of Folio/);
   console.log("ok  sample rendered with a text layer");
 
-  // Opening another document (here from the file manager) asks first when there's unsaved work, a placed signature,
-  // and keeps it if the reader says no.
+  // A signature is an unsaved edit that must survive a tab switch.
   const photo = await page.evaluate(() => {
     const canvas = Object.assign(document.createElement("canvas"), { width: 600, height: 200 });
     const g = canvas.getContext("2d");
@@ -100,31 +100,66 @@ try {
   console.log("ok  printing keeps unsaved work marked as unsaved");
 
   const sample = await page.evaluate(async () => Array.from(new Uint8Array(await (await fetch("sample.pdf")).arrayBuffer())));
-  const openFromFileManager = () => app.evaluate(({ BrowserWindow }, data) =>
-    BrowserWindow.getAllWindows()[0].webContents.send("folio:open-file", { name: "Another.pdf", data: Buffer.from(data) }), sample);
-  // Answer in the renderer. Electron can show a native confirm dialog even when its window is off-screen.
-  const confirmation = await page.evaluateHandle(() => {
+  const other = Buffer.concat([Buffer.from(sample), Buffer.from("\\n% Another PDF")]);
+  const docs = page.getByRole("tablist", { name: "Open documents" });
+  const select = name => docs.getByRole("tab", { name, exact: true }).click();
+  await page.getByTitle("Next page").click();
+  // Stub the native confirmation only in this test window.
+  await page.window.evaluate(() => {
     const original = window.confirm;
-    const messages = [];
-    window.confirm = message => {
-      messages.push(message);
-      return messages.length === 2; // Cancel the first open, then OK the second.
-    };
-    return { messages, restore: () => { window.confirm = original; } };
+    window.tabPrompts = [];
+    window.confirm = message => { window.tabPrompts.push(message); return window.tabPrompts.length === 2; };
+    window.restoreConfirm = () => { window.confirm = original; };
   });
-  await openFromFileManager();
-  await page.waitForFunction(stub => stub.messages.length === 1, confirmation, { timeout: 15_000 });
-  assert.equal(await page.title(), "Folio sample.pdf — Folio");
-  assert.equal(await page.locator(".stampEditor").count(), 1);
-  assert.ok(await page.locator(".dirty-dot").isVisible());
-  await openFromFileManager();
-  await page.waitForFunction(() => document.title.startsWith("Another.pdf"), null, { timeout: 15_000 });
-  await page.locator(".textLayer span:not(.markedContent)").first().waitFor({ timeout: 30_000 });
-  const warning = "You have unsaved changes. Open another document anyway?";
-  assert.deepEqual(await confirmation.evaluate(stub => stub.messages), [warning, warning]);
+  await app.evaluate(({ BrowserWindow }, bytes) => BrowserWindow.getAllWindows()[0].webContents.send(
+    "folio:open-file", { name: "Another.pdf", data: Buffer.from(bytes) }), Array.from(other));
+  await page.locator(".textLayer span:not(.markedContent)").first().waitFor();
+  await docs.getByRole("tab", { name: "Another.pdf", selected: true }).waitFor();
   assert.equal(await page.locator(".stampEditor").count(), 0);
-  await confirmation.evaluate(stub => stub.restore());
-  console.log("ok  opening another document asks before discarding unsaved work");
+  await select("Folio sample.pdf");
+  assert.equal(await page.getByLabel("Page number", { exact: true }).inputValue(), "2");
+  await page.getByTitle("Previous page").click();
+  await page.locator(".stampEditor").waitFor();
+  assert.deepEqual(await page.window.evaluate(() => window.tabPrompts), []);
+  await select("Another.pdf");
+  const closeSigned = docs.getByRole("button", { name: "Close Folio sample.pdf, unsaved changes" });
+  await closeSigned.click();
+  assert.equal(await docs.getByRole("tab").count(), 2);
+  await closeSigned.click();
+  await closeSigned.waitFor({ state: "detached" });
+  assert.equal(await page.window.evaluate(() => window.tabPrompts.length), 2);
+  await page.window.evaluate(() => window.restoreConfirm());
+
+  // Batch opening keeps picker order, never replaces the current reader, and gives each file its own view.
+  const choosing = page.waitForEvent("filechooser");
+  await page.keyboard.press("ControlOrMeta+o");
+  const chooser = await choosing;
+  assert.equal(chooser.isMultiple(), true);
+  await chooser.setFiles(["One.pdf", "Two.pdf"].map(name => ({ name, mimeType: "application/pdf",
+    buffer: Buffer.concat([other, Buffer.from(name)]) })));
+  await docs.getByRole("tab", { name: "One.pdf", selected: true }).waitFor();
+  assert.deepEqual(await docs.getByRole("tab").allTextContents(), ["Another.pdf", "One.pdf", "Two.pdf"]);
+  await select("Two.pdf");
+  await page.locator(".textLayer span:not(.markedContent)").first().waitFor();
+  await page.locator(".document-tabs").screenshot({ path: path.join(shots, `document-tabs-${process.platform}.png`) });
+  await page.keyboard.press("Control+Shift+Tab");
+  await docs.getByRole("tab", { name: "One.pdf", selected: true }).waitFor();
+  await page.evaluate(data => {
+    const transfer = new DataTransfer();
+    for (const name of ["Drop A.pdf", "Drop B.pdf"]) {
+      transfer.items.add(new File([Uint8Array.from(data), name], name, { type: "application/pdf" }));
+    }
+    window.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer }));
+  }, sample);
+  await docs.getByRole("tab", { name: "Drop A.pdf", selected: true }).waitFor();
+  assert.equal(await docs.getByRole("tab").count(), 5);
+  for (const name of ["Drop A.pdf", "Drop B.pdf", "One.pdf", "Two.pdf", "Another.pdf"]) {
+    const close = docs.getByRole("button", { name: "Close " + name, exact: true });
+    await close.click(); await close.waitFor({ state: "detached" });
+  }
+  await page.getByRole("button", { name: /Try a sample/ }).click();
+  await page.locator(".textLayer span:not(.markedContent)").first().waitFor();
+  console.log("ok  document tabs keep signatures and pages, confirm discard, and open multiple files");
 
   // Select a sentence and highlight it in one click.
   await page.evaluate(() => {
@@ -202,7 +237,7 @@ try {
   await page.evaluate(() => { Worker.prototype.postMessage = window.folioPostMessage; });
   await page.evaluate(() => document.querySelector('.page[data-page-number="1"]').scrollIntoView());
   await page.waitForTimeout(800);
-  await page.getByTitle("Back to library").click();
+  await docs.getByRole("button", { name: "Close Folio sample.pdf", exact: true }).click();
   await page.getByRole("button", { name: /Try a sample/ }).click();
   await page.locator(".textLayer span:not(.markedContent)").first().waitFor({ timeout: 30_000 });
   const copy = path.join(env.FOLIO_TEST_USER_DATA, "copy.pdf");
@@ -263,7 +298,7 @@ try {
   await page.locator('.freeTextEditor .internal[contenteditable="true"]').fill("Saved text box");
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.waitForTimeout(1000);
-  await page.getByTitle("Back to library").click();
+  await docs.getByRole("button", { name: "Close Folio sample.pdf", exact: true }).click();
   await page.getByRole("button", { name: /Try a sample/ }).click();
   await page.locator(".freeTextEditor", { hasText: "Saved text box" }).waitFor({ timeout: 15_000 });
   console.log("ok  text box restored after reopening");
@@ -285,8 +320,10 @@ try {
     await page.getByRole("button", { name: /Open a PDF/ }).click();
     await (await chooser).setFiles(docx);
     // Stops at a conversion error too, and shows what each converter said.
-    const settled = await page.waitForFunction((name) => document.title.startsWith(name)
-      || document.querySelector(".toast.error")?.textContent, expectedName, { timeout: 150_000 }).catch((error) => error);
+    const settled = await page.window.waitForFunction((name) => {
+      const reader = document.querySelector("iframe.document-reader.active")?.contentDocument;
+      return reader?.title.startsWith(name) || reader?.querySelector(".toast.error")?.textContent;
+    }, expectedName, { timeout: 150_000 }).catch((error) => error);
     if (settled instanceof Error || !(await page.title()).startsWith(expectedName)) {
       const log = path.join(env.FOLIO_TEST_USER_DATA, "convert.log");
       console.log(await page.locator(".toast").textContent().catch(() => "(no message)"));

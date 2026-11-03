@@ -60,7 +60,7 @@ async function checkScanSelection(app, page) {
     `<< ${pageDict} ${resources(5)} /Contents 6 0 R >>`, `<< ${pageDict} ${resources(5)} /Contents 6 0 R >>`,
   ]);
   // Hold OCR at the worker boundary so queue priority and loading messages are independent of CPU speed.
-  await page.evaluate(() => {
+  await page.window.addInitScript(() => {
     const post = Worker.prototype.postMessage;
     let jobs = 0;
     Worker.prototype.postMessage = function (message, ...rest) {
@@ -77,7 +77,7 @@ async function checkScanSelection(app, page) {
   });
   await app.evaluate(({ BrowserWindow }, pdf) => BrowserWindow.getAllWindows()[0].webContents.send(
     "folio:open-file", { name: "Mixed scan.pdf", data: Buffer.from(pdf) }), pdf);
-  await page.waitForFunction(() => document.title.startsWith("Mixed scan.pdf"));
+  await page.window.waitForFunction(() => document.title.startsWith("Mixed scan.pdf"));
   const scan = page.locator('.page[data-page-number="2"]');
   const pageNumber = page.getByLabel("Page number");
   const goTo = async n => { await pageNumber.fill(String(n)); await pageNumber.press("Enter"); };
@@ -251,13 +251,18 @@ export async function checkReaderTools(app, page, folder) {
   assert.ok(reordered.pages[2].marks.includes("FreeText") && reordered.pages[2].marks.includes("Highlight"));
   assert.ok(reordered.pages.at(-1).marks.includes("Highlight"));
   await openCopy.click();
-  await page.waitForFunction(() => document.title.includes("(reordered).pdf"));
+  await page.window.waitForFunction(() => document.title.includes("(reordered).pdf"));
   console.log("ok  reordered PDF pages, bookmark destinations and annotations match the sidebar order");
 
   await app.evaluate(({ BrowserWindow }, form) => BrowserWindow.getAllWindows()[0].webContents.send(
     "folio:open-file", { name: "Form.pdf", data: Buffer.from(form) }), formPdf());
   const field = page.locator(".textWidgetAnnotation input");
   await field.fill("A filled field");
+  const documents = page.getByRole("tablist", { name: "Open documents" });
+  await documents.getByRole("button", { name: "Close Form.pdf, unsaved changes" }).waitFor();
+  await page.keyboard.press("Control+Shift+Tab");
+  await documents.getByRole("tab", { name: "Form.pdf", exact: true }).click();
+  assert.equal(await field.inputValue(), "A filled field");
   await page.getByRole("tab", { name: "Pages" }).click();
   await page.getByRole("button", { name: "Reorder pages" }).click();
   await page.getByLabel("Move page 1 to").fill("2");
@@ -266,7 +271,7 @@ export async function checkReaderTools(app, page, folder) {
   await page.keyboard.press("ControlOrMeta+s");
   await openCopy.click();
   assert.equal(await app.evaluate(() => globalThis.folioReordered), "completed");
-  await page.waitForFunction(() => document.title.startsWith("Form (reordered).pdf"));
+  await page.window.waitForFunction(() => document.title.startsWith("Form (reordered).pdf"));
   await page.getByTitle("Next page").click();
   assert.equal(await page.locator('.page[data-page-number="2"] .textWidgetAnnotation input').inputValue(), "A filled field");
   console.log("ok  the normal Save shortcut and Open reordered copy preserve filled form fields");

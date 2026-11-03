@@ -310,7 +310,7 @@ export class MarkupController {
     window.clearTimeout(this.#saveTimer);
     if (!this.#persist || !this.#docId) return;
     const notes: DocNotes = { id: this.#docId, note: this.#note, marks: [...this.#known.values()], updatedAt: Date.now() };
-    void saveNotes(notes);
+    return saveNotes(notes);
   }
 
   /**

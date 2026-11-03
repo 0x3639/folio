@@ -163,14 +163,14 @@ export function recognizeScannedPages(bus: EventBus, viewer: PDFViewer, onStatus
   }
 
   function schedule() {
-    if (!signal.aborted && !active && timer === undefined && pending.size) {
+    if (!signal.aborted && !window.frameElement?.hasAttribute("inert") && !active && timer === undefined && pending.size) {
       timer = window.setTimeout(prepareNext, 0);
     }
   }
 
   async function prepareNext() {
     timer = undefined;
-    if (!pending.size || signal.aborted) return;
+    if (!pending.size || signal.aborted || window.frameElement?.hasAttribute("inert")) return;
     // Start at the last jump, continue ahead of the reader, then wrap back to the beginning.
     while (!pending.has(nextPage)) nextPage = nextPage % pdf.numPages + 1;
     const n = nextPage;
@@ -244,6 +244,7 @@ export function recognizeScannedPages(bus: EventBus, viewer: PDFViewer, onStatus
     updateStatus();
     schedule();
   }, { signal });
+  window.addEventListener("folio:tab-visibility", schedule, { signal });
   bus.on("pagesdestroy", () => {
     controller.abort();
     window.clearTimeout(timer);

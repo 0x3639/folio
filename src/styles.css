@@ -111,6 +111,62 @@ kbd {
 }
 
 /* ── Shell ──────────────────────────────────────────────────────────── */
+.document-reader {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  visibility: hidden;
+}
+.document-reader.active { visibility: visible; }
+.window-drag-area { position: absolute; top: 0; pointer-events: none; -webkit-app-region: drag; }
+.window-drag-area span { position: absolute; inset-block: 0; -webkit-app-region: no-drag; }
+.document-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px 0;
+  background: var(--stage);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  z-index: 12;
+}
+.document-tab-list { display: flex; min-width: 0; gap: 3px; overflow-x: auto; scrollbar-width: thin; }
+.document-tab {
+  display: flex;
+  align-items: center;
+  max-width: 200px;
+  min-width: 96px;
+  border-radius: 8px 8px 0 0;
+  color: var(--text-2);
+}
+.document-tab:hover { background: var(--hover); }
+.document-tab.selected { background: var(--surface); box-shadow: inset 0 2px var(--accent); color: var(--text); }
+.document-tab [role=tab] {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 4px 0 10px;
+  min-width: 0;
+  flex: 1;
+  font-size: 13px;
+}
+.document-tab [role=tab] svg { flex: none; }
+.document-tab.selected [role=tab] { font-weight: 600; }
+.document-tab.selected [role=tab] svg { color: var(--accent); }
+.document-tab [role=tab] span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.document-tab button:focus-visible, .new-document-tab:focus-visible { outline-offset: -3px; }
+.close-document-tab {
+  display: grid; place-items: center; flex: none; width: 25px; height: 25px; margin-right: 4px; border-radius: 5px;
+}
+.close-document-tab:hover { background: var(--active); }
+.close-document-tab:has(.dirty-dot) svg, .close-document-tab:is(:hover,:focus-visible) .dirty-dot { display: none; }
+.close-document-tab:is(:hover,:focus-visible) svg { display: block; }
+.new-document-tab { align-self: center; margin-bottom: 2px; }
+.app:has(.document-tabs) .welcome, .app:has(.document-tabs) .loading-bar { top: calc(var(--topbar-h) + 41px); }
+
 .app {
   height: 100%;
   display: flex;
@@ -187,20 +243,6 @@ kbd {
   letter-spacing: -0.01em;
 }
 
-.doc-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  margin-left: 6px;
-  font-weight: 550;
-  color: var(--text);
-}
-.doc-title span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .dirty-dot {
   width: 7px;
   height: 7px;
@@ -1430,7 +1472,6 @@ kbd {
   }
 }
 @media (max-width: 760px) {
-  .doc-title,
   .brand-name,
   .topbar-right .divider,
   .wide-only {

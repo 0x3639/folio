@@ -1,6 +1,8 @@
 // Takes the README screenshots in docs/screenshots: launches the built app on the sample document and captures
 // highlights and notes (light theme), Ask AI, and search (dark theme). The Ask AI shot asks Claude Code a
 // real question, so it needs Claude Code installed and signed in; it's skipped otherwise. Run `npm run build` first.
+import assert from "node:assert/strict";
+import { readerPage } from "./reader-page.mjs";
 import { _electron as electron } from "playwright-core";
 import { createRequire } from "node:module";
 import { mkdtempSync, mkdirSync } from "node:fs";
@@ -14,9 +16,10 @@ mkdirSync(out, { recursive: true });
 
 const env = { ...process.env, FOLIO_TEST_USER_DATA: mkdtempSync(path.join(tmpdir(), "folio-shots-")), FOLIO_TEST_HIDDEN: "1" };
 delete env.ELECTRON_RUN_AS_NODE;
-const app = await electron.launch({ executablePath: require("electron"), args: [root, "--force-device-scale-factor=2"], env, timeout: 60_000 });
+const app = await electron.launch({ executablePath: require("electron"), args: [root, "--mute-audio", "--force-device-scale-factor=2"], env, timeout: 60_000 });
 try {
-  const page = await app.firstWindow();
+  const page = readerPage(await app.firstWindow());
+  assert.ok(await app.evaluate(({ app }) => app.commandLine.hasSwitch("mute-audio")));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1400, 880));
   const shot = async (name) => {
     await page.waitForTimeout(800);

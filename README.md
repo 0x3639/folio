@@ -38,9 +38,8 @@ Or build Folio yourself from source (below).
 
 ### Open PDFs and web links
 
-- **Local files:** open a PDF with the file picker, drag and drop it anywhere in Folio, or use **Open with → Folio**
-  from your file manager. The desktop app keeps one window, bringing an already-running copy forward when you open
-  another PDF.
+- **Document tabs.** Pick or drop several PDFs together, or open them from your file manager. Each document has a tab
+  beneath the toolbar and keeps its page, zoom, and edits when you switch. Click **+** to open the library in a new tab.
 - **PDF URLs:** choose **Open from URL** (`Ctrl+Shift+O`), or drop a link or paste it with `Ctrl+V` outside a text
   field to fill it in, then press **Open**. Folio downloads and opens the PDF, follows redirects, and uses the server's
   filename when available. Folio asks once more before opening an address on your computer or local network.
@@ -178,6 +177,8 @@ On macOS, use `⌘` wherever this table says `Ctrl`. Press `?` with a document o
 | Action | Shortcut |
 | --- | --- |
 | Open a PDF / open a URL | `Ctrl+O` / `Ctrl+Shift+O` |
+| New tab / close tab | `Ctrl+T` / `Ctrl+W` |
+| Next tab / previous tab (Control on all platforms) | `Control+Tab` / `Control+Shift+Tab` |
 | Find / next match / previous match | `Ctrl+F` / `Enter` / `Shift+Enter` |
 | Highlight selection / write a note | `H` / `N` |
 | Remove a clicked highlight | `Delete` |

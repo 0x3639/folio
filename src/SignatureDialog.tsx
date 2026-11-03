@@ -88,13 +88,20 @@ export function SignatureDialog({ pdf, pageNumber, targets, onApprove, onClose }
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     setCamera(false); setCameraReady(false); setCameraStarting(false);
   };
+  useEffect(() => {
+    const onSwitch = () => { if (window.frameElement?.hasAttribute("inert")) stopCamera(); };
+    window.addEventListener("folio:tab-visibility", onSwitch);
+    return () => window.removeEventListener("folio:tab-visibility", onSwitch);
+  }, []);
   const startCamera = async () => {
     const generation = ++captureGeneration.current;
     setCameraStarting(true);
     setError("");
     try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera isn't available. Upload a photo instead.");
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
+      // Desktop camera permission belongs to the Folio window that asks for consent.
+      const devices = window.folioDesktop ? window.parent.navigator.mediaDevices : navigator.mediaDevices;
+      if (!devices?.getUserMedia) throw new Error("Camera isn't available. Upload a photo instead.");
+      const stream = await devices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
       if (!mounted.current || generation !== captureGeneration.current) { stream.getTracks().forEach(track => track.stop()); return; }
       streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = stream; setCamera(true);
     } catch (reason) { if (mounted.current && generation === captureGeneration.current) setError("Couldn't access the camera. Check your camera permissions or upload a photo. " + (reason as Error).message); }

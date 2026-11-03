@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   EventBus,
   LinkTarget,
@@ -10,9 +10,12 @@ import {
 } from "./viewer";
 import { AnnotationEditorParamsType, AnnotationEditorType } from "pdfjs-dist";
 import { loadPdf, reorderPdf, thumbnailDataUrl, type PDFDocumentProxy } from "./pdf";
-import { contentKey, getRecent, MAX_RECENT_FILE_BYTES, saveRecent, updateLastPage } from "./recent";
+import { contentKey, getRecent, MAX_RECENT_FILE_BYTES, removeRecent, saveRecent, updateLastPage } from "./recent";
 import { readPdfBlob, readPdfResponse } from "./pdfInput";
-import { activeDocument, FIT_SCALES, readView, setActiveDocument, writeView, type ReadingView } from "./session";
+import { FIT_SCALES, readView, writeView, type ReadingView } from "./session";
+import { DocumentTabBar } from "./DocumentTabBar";
+import { trackTitlebar } from "./titlebar";
+import type { DocumentTabs, OpenSource } from "./documentTabs";
 import { SearchResults } from "./SearchResults";
 import { Icon, type IconName } from "./icons";
 import { Welcome } from "./Welcome";
@@ -96,7 +99,9 @@ interface Pending {
 // SharedArrayBuffer, which pdf.js never hands out, but its types don't say so.)
 const pdfBlob = (bytes: Uint8Array) => new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/pdf" });
 
-export default function App() {
+export default function App({ tabs, tabKey }: { tabs: DocumentTabs; tabKey: number }) {
+  const headerRef = useRef<HTMLElement>(null);
+  const active = useSyncExternalStore(tabs.subscribe, () => tabs.active === tabKey);
   const containerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<PDFViewer | null>(null);
@@ -111,7 +116,6 @@ export default function App() {
   const docRef = useRef<OpenDoc | null>(null);
   const markupRef = useRef<MarkupController | null>(null);
   const persistRef = useRef(false);
-  const unsavedRef = useRef(false);
   const exporting = useRef<PDFDocumentProxy | null>(null);
 
   const [doc, setDoc] = useState<OpenDoc | null>(null);
@@ -174,6 +178,12 @@ export default function App() {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiContext, setAiContext] = useState<AiContext | null>(null);
 
+  useLayoutEffect(() => {
+    if (active && window.folioDesktop && !focus && !dialog && !signing && !pending && !imageView) {
+      return trackTitlebar(headerRef.current!);
+    }
+  }, [active, doc, focus, dialog, signing, pending, imageView]);
+
   useEffect(() => {
     setSigning(false); setSignatureTargets([]); setSignatureDismissed(false);
     if (!doc) return;
@@ -187,10 +197,10 @@ export default function App() {
   }, [doc, page]);
 
   docRef.current = doc;
-  unsavedRef.current = unsaved;
   preferencesRef.current = { sidebar, spread };
 
-  const mayReplaceDocument = () => !unsavedRef.current || confirm("You have unsaved changes. Open another document anyway?");
+  useLayoutEffect(() => tabs.markDirty(tabKey, unsaved), [tabs, tabKey, unsaved]);
+  useEffect(() => { window.dispatchEvent(new Event("folio:tab-visibility")); }, [active]);
 
   const toastTimer = useRef(0);
   const flash = useCallback((msg: string) => {
@@ -317,6 +327,7 @@ export default function App() {
         signal.throwIfAborted();
         const existing = await getRecent(id);
         signal.throwIfAborted();
+        if (!tabs.opened(tabKey, id, name)) return;
         const saved = readView(id);
         restoreRef.current = saved;
         lastPageRef.current = Math.min(saved?.page ?? existing?.lastPage ?? 1, pdf.numPages);
@@ -364,7 +375,6 @@ export default function App() {
         document.title = `${name} — Folio`;
 
         setLoading(false);
-        setActiveDocument(id);
         // Password-protected documents stay out of Recent: it would keep their bytes and a page-1
         // thumbnail unprotected on disk. Very large files are skipped too — see MAX_RECENT_FILE_BYTES.
         if (!password && data.byteLength <= MAX_RECENT_FILE_BYTES) void (async () => {
@@ -387,6 +397,7 @@ export default function App() {
         if (e?.name === "PasswordException") {
           setPending({ name, data, error: e.code === 2 ? "Incorrect password. Try again." : undefined });
         } else {
+          tabs.failed(tabKey);
           setError(`Couldn't open “${name}”. ${e?.message ?? "The file may be damaged."}`);
         }
       } finally {
@@ -394,7 +405,7 @@ export default function App() {
         if (!signal.aborted) setLoading(false);
       }
     },
-    [beginOpen],
+    [beginOpen, tabs, tabKey],
   );
 
   const openBlob = useCallback(async (name: string, blob: Blob) => {
@@ -407,41 +418,34 @@ export default function App() {
     } catch (error) {
       if (!signal.aborted) {
         setLoading(false);
+        tabs.failed(tabKey);
         setError(`Couldn't open “${name}”. ${(error as Error).message}`);
         return false;
       }
     }
     return true;
-  }, [beginOpen, openBytes]);
+  }, [beginOpen, openBytes, tabs, tabKey]);
 
-  const openFile = useCallback(
-    async (file: File) => {
-      // The desktop app converts Word documents; the PDF arrives like one opened from the file manager.
-      if (window.folioDesktop && /\.docx?$/i.test(file.name)) {
-        window.folioDesktop.openDocument(file).catch(() => setError(`Couldn't open “${file.name}”.`));
-        return;
-      }
-      if (file.type && file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-        setError(`“${file.name}” isn't a PDF.`);
-        return;
-      }
-      if (!mayReplaceDocument()) return;
-      await openBlob(file.name, file);
-    },
-    [openBlob],
-  );
+  const openFiles = useCallback((files: FileList) => {
+    tabs.open(Array.from(files, (file): OpenSource => {
+      if (window.folioDesktop && /\.docx?$/i.test(file.name)) return { kind: "word", name: file.name, file };
+      if (file.type && file.type !== "application/pdf" && !/\.pdf$/i.test(file.name))
+        return { kind: "error", name: file.name, message: `“${file.name}” isn't a PDF.` };
+      return { kind: "blob", name: file.name, blob: file };
+    }));
+  }, [tabs]);
 
   const pickFile = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
+    input.multiple = true;
     input.accept = window.folioDesktop ? "application/pdf,.pdf,.doc,.docx" : "application/pdf,.pdf";
-    input.onchange = () => { if (input.files?.[0]) void openFile(input.files[0]); };
+    input.onchange = () => { if (input.files?.length) openFiles(input.files); };
     input.click();
-  }, [openFile]);
+  }, [openFiles]);
 
   const openUrl = useCallback(
     async (url: string) => {
-      if (!mayReplaceDocument()) return;
       const signal = beginOpen();
       const host = new URL(url).hostname;
       setLoading(true);
@@ -463,16 +467,17 @@ export default function App() {
         }
         if (signal.aborted) return;
         setToast(null);
-        if (!file) return setLoading(false);
+        if (!file) { tabs.failed(tabKey); return setLoading(false); }
         await openBytes(file.name, file.data, undefined, signal);
       } catch (e: any) {
         if (signal.aborted) return;
         setToast(null);
         setLoading(false);
+        tabs.failed(tabKey);
         setError(`Couldn't open that link. ${e?.message ?? ""}`.trim());
       }
     },
-    [beginOpen, openBytes],
+    [beginOpen, openBytes, tabs, tabKey],
   );
 
   const openSample = useCallback(async () => {
@@ -482,29 +487,9 @@ export default function App() {
       const data = await readPdfResponse(res, signal);
       if (!signal.aborted) await openBytes("Folio sample.pdf", data, undefined, signal);
     } catch {
-      if (!signal.aborted) { setLoading(false); setError("Couldn't open the sample document."); }
+      if (!signal.aborted) { setLoading(false); tabs.failed(tabKey); setError("Couldn't open the sample document."); }
     }
-  }, [beginOpen, openBytes]);
-
-  const closeDoc = useCallback(() => {
-    if (unsavedRef.current && !confirm("You have unsaved changes. Close anyway?")) return;
-    opening.current?.abort();
-    setActiveDocument(null);
-    markupRef.current!.unload();
-    setNoteBox(null);
-    setLoading(false);
-    setPending(null);
-    viewerRef.current!.setDocument(null as unknown as PDFDocumentProxy);
-    linkRef.current!.setDocument(null, null);
-    docRef.current?.pdf.loadingTask.destroy();
-    docRef.current = null;
-    setDoc(null);
-    setPageDraft(null);
-    setDirty(false);
-    setSearchOpen(false);
-    setFocus(false);
-    document.title = "Folio";
-  }, []);
+  }, [beginOpen, openBytes, tabs, tabKey]);
 
   // Remember where the reader left off.
   useEffect(() => {
@@ -817,36 +802,57 @@ export default function App() {
     }, 60_000);
   };
 
-  // Desktop app: PDFs (and converted Word documents) opened from Explorer, and a title bar that matches the theme.
   useEffect(() => {
-    let cancelled = false;
-    const initial = opening.current;
-    const unsubscribe = window.folioDesktop?.onOpenFile((name, data, note) => {
-      setToast(null);
-      if (!mayReplaceDocument()) return setLoading(false);
-      void openBytes(name, data).then(() => { if (note && docRef.current?.name === name) flash(note); });
-    });
-    const unsubscribeConverting = window.folioDesktop?.onConverting((name) => {
-      setLoading(true);
-      setError(null);
-      setToast(`Converting ${name} to PDF…`);
-    });
-    const unsubscribeFailed = window.folioDesktop?.onOpenFailed((message) => {
-      setToast(null);
-      setLoading(false);
-      setError(message);
-    });
-    void (async () => {
-      const hasStartupFile = await window.folioDesktop?.ready();
-      if (hasStartupFile || cancelled || initial !== opening.current) return;
-      const id = activeDocument();
-      const recent = id ? await getRecent(id) : undefined;
-      if (!recent || cancelled || initial !== opening.current) return;
-      void openBlob(recent.name, recent.data);
-    })().catch(() => {}); // restoring the last document is best-effort
-    return () => { cancelled = true; unsubscribe?.(); unsubscribeConverting?.(); unsubscribeFailed?.(); };
-  }, [openBlob, openBytes]);
-  useEffect(() => window.folioDesktop?.setTheme(theme), [theme]);
+    const open = async (source: OpenSource) => {
+      switch (source.kind) {
+        case "bytes":
+          await openBytes(source.name, new Uint8Array(source.data.buffer, source.data.byteOffset, source.data.byteLength), source.password);
+          if (source.note && docRef.current?.name === source.name) flash(source.note);
+          break;
+        case "blob":
+          if (!await openBlob(source.name, source.blob) && source.recentId) void removeRecent(source.recentId);
+          break;
+        case "word": {
+          const signal = beginOpen();
+          setLoading(true); setError(null); setToast(`Converting ${source.name} to PDF…`);
+          try {
+            const file = await window.folioDesktop!.openDocument(source.file);
+            if (signal.aborted) return;
+            setToast(null);
+            await openBytes(file.name, new Uint8Array(file.data), undefined, signal);
+            if (file.note && docRef.current?.name === file.name) flash(file.note);
+          } catch (error) {
+            if (signal.aborted) return;
+            setToast(null); setLoading(false); tabs.failed(tabKey);
+            setError(`Couldn't convert “${source.name}” to PDF. ${(error as Error).message}`);
+          }
+          break;
+        }
+        case "sample": await openSample(); break;
+        case "url": await openUrl(source.url); break;
+        case "converting": setLoading(true); setToast(`Converting ${source.name} to PDF…`); break;
+        case "error": setLoading(false); setToast(null); setError(source.message); tabs.failed(tabKey); break;
+      }
+    };
+    tabs.bind(tabKey, { open: source => { void open(source); }, flush: async () => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      markupRef.current?.sync();
+      await markupRef.current?.flush();
+      opening.current?.abort();
+    } });
+  }, [tabs, tabKey, openBytes, openBlob, openSample, openUrl, beginOpen, flash]);
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key === "folio:theme" && (event.newValue === "light" || event.newValue === "dark")) {
+        document.documentElement.dataset.theme = event.newValue; setTheme(event.newValue);
+      }
+      if (event.key === "folio:night") setNight(event.newValue === "1");
+      if (event.key === "folio:wheel-paging") setWheelPaging(event.newValue === "1");
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
+  useEffect(() => { if (active) window.folioDesktop?.setTheme(theme); }, [active, theme]);
   // The update banner appears once a new version has been downloaded (the status reports that right away too).
   useEffect(() => window.folioDesktop?.onUpdateStatus((status) => {
     if (status.state === "ready" && status.version) setUpdateVersion(status.version);
@@ -882,19 +888,21 @@ export default function App() {
     setNight(next);
   };
 
-  // Warn before losing unsaved annotations.
-  useEffect(() => {
-    if (!unsaved) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [unsaved]);
-
   // ── Keyboard shortcuts ──────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (signing) return;
+      if (tabs.active !== tabKey) return;
       const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "t") {
+        e.preventDefault(); tabs.library(); return;
+      }
+      if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "w") {
+        e.preventDefault(); void tabs.close(tabKey); return;
+      }
+      if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault(); tabs.cycle(e.shiftKey ? -1 : 1); return;
+      }
+      if (signing) return;
       const target = e.target as HTMLElement;
       const typing = target.closest("input, textarea, [contenteditable=true], .freeTextEditor");
 
@@ -1008,9 +1016,9 @@ export default function App() {
       e.preventDefault();
       depth = 0;
       setDragging(false);
-      const file = e.dataTransfer?.files[0];
-      const url = !file && e.dataTransfer ? droppedUrl(e.dataTransfer) : null;
-      if (file) void openFile(file);
+      const files = e.dataTransfer?.files;
+      const url = !files?.length && e.dataTransfer ? droppedUrl(e.dataTransfer) : null;
+      if (files?.length) openFiles(files);
       else if (url) openUrlDialog(url);
       else setError("Drop a PDF file or a link to a PDF.");
     };
@@ -1038,7 +1046,7 @@ export default function App() {
       window.removeEventListener("dragover", over);
       window.removeEventListener("drop", drop);
     };
-  }, [openFile, signing]);
+  }, [openFiles, signing]);
 
   const runFind = (query: string, opts: { again?: boolean; previous?: boolean; caseSensitive?: boolean; entireWord?: boolean }) =>
     busRef.current!.dispatch("find", {
@@ -1067,19 +1075,15 @@ export default function App() {
       data-night={night || undefined}
       data-tool={tool}
     >
-      <header className="topbar">
+      <header className="topbar" ref={headerRef}>
         <div className="topbar-left">
-          <button className="brand" onClick={doc ? closeDoc : undefined} title={doc ? "Back to library" : "Folio"}>
+          <button className="brand" onClick={doc ? () => tabs.library() : undefined} title={doc ? "Back to library" : "Folio"}>
             <span className="brand-mark" />
             <span className="brand-name">Folio</span>
           </button>
           {doc && (
             <>
               <IconButton icon="sidebar" label={keys("Toggle sidebar (Ctrl+\\)")} active={sidebar} onClick={() => setSidebar(!sidebar)} />
-              <div className="doc-title" title={doc.name}>
-                <span>{doc.name.replace(/\.pdf$/i, "")}</span>
-                {unsaved && <span className="dirty-dot" title="Unsaved changes" />}
-              </div>
             </>
           )}
         </div>
@@ -1129,8 +1133,9 @@ export default function App() {
           />
         </div>
       </header>
+      {!focus && <DocumentTabBar tabs={tabs} tabKey={tabKey} />}
 
-      <div className="body">
+      <div className="body" id="reader-panel" role="tabpanel" aria-label={doc?.name ?? "Library"}>
         {doc && (
           <Sidebar
             key={doc.pdf.loadingTask.docId}
@@ -1142,7 +1147,7 @@ export default function App() {
             onOrder={order => setPageDraft(order ? { order } : null)}
             onSaveOrder={download}
             onOpenCopy={pageDraft?.copy ? () => {
-              if (mayReplaceDocument()) void openBytes(copyName, pageDraft.copy!, doc.password);
+              tabs.open([{ kind: "bytes", name: copyName, data: pageDraft.copy!, password: doc.password }]);
             } : undefined}
             onSelectDest={(dest) => linkRef.current!.goToDestination(dest as string)}
             tab={sidebarTab}
@@ -1164,7 +1169,11 @@ export default function App() {
         )}
 
         <main className="stage">
-          <div ref={containerRef} className="viewer-container" tabIndex={-1}>
+          <div ref={containerRef} className="viewer-container" tabIndex={-1}
+            onInput={event => {
+              // Form values live in the PDF until a copy is saved. Folio only auto-saves its own markup.
+              if ((event.target as HTMLElement).closest(".annotationLayer :is(input, textarea, select)")) setDirty(true);
+            }}>
             <div ref={innerRef} className="pdfViewer" />
           </div>
           {doc && <div className="page-text-status" role="status">{textStatus}</div>}
@@ -1314,7 +1323,8 @@ export default function App() {
         )}
       </div>
 
-      {!doc && <Welcome onPick={pickFile} onOpenUrl={() => openUrlDialog()} onOpenBlob={openBlob} onSample={openSample} loading={loading} />}
+      {!doc && <Welcome active={active} onPick={pickFile} onOpenUrl={() => openUrlDialog()} onOpenRecent={file => tabs.open([{ kind: "blob", name: file.name, blob: file.data, recentId: file.id }])}
+        onSample={() => tabs.open([{ kind: "sample", name: "Folio sample.pdf" }])} loading={loading} />}
 
       {loading && doc && <div className="loading-bar" />}
 
@@ -1332,7 +1342,7 @@ export default function App() {
           name={pending.name}
           error={pending.error}
           onSubmit={(pw) => openBytes(pending.name, pending.data, pw)}
-          onCancel={() => setPending(null)}
+          onCancel={() => { setPending(null); tabs.failed(tabKey); }}
         />
       )}
       {dialog === "info" && doc && <InfoDialog key={doc.pdf.loadingTask.docId} pdf={doc.pdf} name={doc.name} size={doc.size} onClose={() => setDialog(null)} />}
@@ -1348,7 +1358,7 @@ export default function App() {
       {/* Closing goes back to Settings, where the changelog is opened from. */}
       {dialog === "changelog" && <ChangelogDialog onClose={() => setDialog("settings")} />}
       {doc && imageView && <ImageViewer pdf={doc.pdf} target={imageView} onClose={() => setImageView(null)} />}
-      {dialog === "url" && <OpenUrlDialog key={linkDraft} initial={linkDraft} onClose={() => setDialog(null)} onSubmit={(url) => { setDialog(null); openUrl(url); }} />}
+      {dialog === "url" && <OpenUrlDialog key={linkDraft} initial={linkDraft} onClose={() => setDialog(null)} onSubmit={(url) => { setDialog(null); tabs.open([{ kind: "url", name: new URL(url).hostname, url }]); }} />}
       {doc && signing && <SignatureDialog key={doc.id + ":" + page} pdf={doc.pdf} pageNumber={page} targets={signatureTargets}
         onClose={() => setSigning(false)} onApprove={async (signature, rect) => {
           await placeSignature(viewerRef.current!, doc.pdf, page, signature, rect);
@@ -1369,7 +1379,6 @@ export default function App() {
           <button
             className="btn primary"
             onClick={() => {
-              if (unsaved && !confirm("You have unsaved changes. Restart anyway?")) return;
               window.folioDesktop?.installUpdate();
             }}
           >
