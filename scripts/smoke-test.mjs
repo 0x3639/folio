@@ -642,6 +642,45 @@ try {
   assert.match(closePrompt, process.platform === "darwin" ? /⌘S/ : /Ctrl\+S/);
   console.log("ok  the unsaved-work prompt shows this platform's Save shortcut");
 
+  // Closing Ask AI mid-answer stops the answer, like Stop: it doesn't run on unseen or come back unfinished. A stand-in
+  // provider starts each answer and never finishes it.
+  await app.evaluate(({ ipcMain, BrowserWindow }) => {
+    const ai = globalThis.folioAi = { asked: [], cancelled: [], reply: "" };
+    for (const channel of ["folio:ai-status", "folio:ai-ask", "folio:ai-cancel"]) ipcMain.removeHandler(channel);
+    ipcMain.handle("folio:ai-status", () => ({ chatgpt: { connected: false, email: "", name: "", welcomeSeen: true, encrypted: true },
+      claude: { installed: true, loggedIn: true, subscription: true, version: "test", authMethod: "claude.ai" } }));
+    ipcMain.handle("folio:ai-ask", (_event, request) => {
+      ai.asked.push(request.id);
+      if (ai.reply) BrowserWindow.getAllWindows()[0].webContents.send("folio:ai-event", { id: request.id, type: "delta", text: ai.reply });
+      return true;
+    });
+    ipcMain.handle("folio:ai-cancel", (_event, id) => { ai.cancelled.push(id); return true; });
+  });
+  await page.evaluate(() => localStorage.setItem("folio:ai-provider", "claude"));
+  const aiPanel = page.getByRole("complementary", { name: "Ask AI" });
+  const askAndClose = async (question, reply) => {
+    const asked = await app.evaluate((_electron, reply) => { globalThis.folioAi.reply = reply; return globalThis.folioAi.asked.length; }, reply);
+    await aiPanel.getByRole("textbox").fill(question);
+    await aiPanel.getByRole("textbox").press("Enter");
+    // Wait until the question has reached the provider, so the answer is under way rather than still being prepared.
+    for (let i = 0; i < 50 && (await app.evaluate(() => globalThis.folioAi.asked.length)) === asked; i++) await page.waitForTimeout(100);
+    if (reply) await aiPanel.getByText(reply).waitFor();
+    await aiPanel.getByRole("button", { name: "Close Ask AI" }).click();
+    await page.getByRole("button", { name: "Ask AI", exact: true }).click();
+    await aiPanel.getByText(question).waitFor();
+  };
+  await page.getByRole("button", { name: "Ask AI", exact: true }).click();
+  await askAndClose("First question", "Partial answer");
+  await askAndClose("Second question", "");
+  const aiCheck = await app.evaluate(() => globalThis.folioAi);
+  assert.equal(aiCheck.asked.length, 2);
+  assert.deepEqual(aiCheck.cancelled, aiCheck.asked, "closing Ask AI left an answer running");
+  assert.equal(await aiPanel.locator(".typing").count(), 0, "a stopped answer still shows as in progress");
+  assert.ok(await aiPanel.getByText("Partial answer").isVisible(), "the part already answered was dropped");
+  assert.equal(await aiPanel.getByRole("button", { name: "Stop" }).count(), 0, "the panel still thinks an answer is running");
+  await aiPanel.getByRole("button", { name: "Close Ask AI" }).click();
+  console.log("ok  closing Ask AI stops the answer in progress");
+
   assert.deepEqual(failures, []);
   console.log(`PASS (${process.platform})`);
 } finally {

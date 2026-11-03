@@ -72,6 +72,10 @@ function CopyResponse({ text }: { text: string }) {
   );
 }
 
+// Failed and empty answers aren't kept.
+const storedMessages = (messages: Message[]) =>
+  messages.filter((m) => !m.error && m.content).map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) }));
+
 interface Props {
   pdf: PDFDocumentProxy;
   docId: string;
@@ -115,10 +119,8 @@ export function AiPanel({ pdf, docId, persist, docName, context, onClearContext,
   useEffect(() => {
     if (!loaded) return;
     conversations.set(docId, messages);
-    // Save once an answer has finished (not on every streamed word); failed answers aren't kept.
-    if (persist && !busy) {
-      void saveAiHistory(docId, messages.filter((m) => !m.error && m.content).map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })));
-    }
+    // Save once an answer has finished (not on every streamed word).
+    if (persist && !busy) void saveAiHistory(docId, storedMessages(messages));
   }, [docId, messages, busy, loaded, persist]);
   useEffect(() => { void ai?.status().then(setStatus); }, [ai]);
   useEffect(() => { if (context) inputRef.current?.focus(); }, [context]);
@@ -178,7 +180,22 @@ export function AiPanel({ pdf, docId, persist, docName, context, onClearContext,
 
   const ready = loaded && (provider === "chatgpt" ? chatgptConnected : !!status?.claude.installed && status.claude.loggedIn);
 
-  useEffect(() => () => { preparing.current = null; }, []);
+  // Closing the panel, entering focus mode, or opening another document ends an answer in progress the way Stop does.
+  // Otherwise it keeps running unseen, holds one of the two answers allowed at a time, and comes back never finishing.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  useEffect(() => () => {
+    preparing.current = null;
+    const id = busyRef.current;
+    if (!id) return;
+    busyRef.current = null;
+    void ai?.cancel(id);
+    const list = messagesRef.current;
+    const last = list[list.length - 1];
+    const kept = last?.role === "assistant" && !last.content && !last.error ? list.slice(0, -1) : list;
+    conversations.set(docId, kept);
+    if (persist) void saveAiHistory(docId, storedMessages(kept));
+  }, [ai, docId, persist]);
   const stop = () => {
     if (!busy) return;
     if (preparing.current !== busy) { void ai?.cancel(busy); return; }
