@@ -38,8 +38,8 @@ Or build Folio yourself from source (below).
 
 ### Open PDFs and web links
 
-- **Document tabs.** Pick or drop several PDFs together, or open them from your file manager. Each document has a tab
-  beneath the toolbar and keeps its page, zoom, and edits when you switch. Click **+** to open the library in a new tab.
+- **Document tabs.** Pick or drop several PDFs together, or choose **More → New tab**. The tab strip appears beneath
+  the toolbar when two or more tabs are open. Each document keeps its page, zoom, and edits when you switch.
 - **PDF URLs:** choose **Open from URL** (`Ctrl+Shift+O`), or drop a link or paste it with `Ctrl+V` outside a text
   field to fill it in, then press **Open**. Folio downloads and opens the PDF, follows redirects, and uses the server's
   filename when available. Folio asks once more before opening an address on your computer or local network.

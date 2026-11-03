@@ -243,6 +243,8 @@ kbd {
   letter-spacing: -0.01em;
 }
 
+.doc-title { display: flex; align-items: center; gap: 7px; min-width: 0; margin-inline-start: 6px; font-weight: 550; }
+.doc-title span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .dirty-dot {
   width: 7px;
   height: 7px;
@@ -1472,6 +1474,7 @@ kbd {
   }
 }
 @media (max-width: 760px) {
+  .doc-title span:first-child,
   .brand-name,
   .topbar-right .divider,
   .wide-only {

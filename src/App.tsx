@@ -102,6 +102,7 @@ const pdfBlob = (bytes: Uint8Array) => new Blob([bytes as Uint8Array<ArrayBuffer
 export default function App({ tabs, tabKey }: { tabs: DocumentTabs; tabKey: number }) {
   const headerRef = useRef<HTMLElement>(null);
   const active = useSyncExternalStore(tabs.subscribe, () => tabs.active === tabKey);
+  const multipleTabs = useSyncExternalStore(tabs.subscribe, () => tabs.all.length > 1);
   const containerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<PDFViewer | null>(null);
@@ -1084,6 +1085,10 @@ export default function App({ tabs, tabKey }: { tabs: DocumentTabs; tabKey: numb
           {doc && (
             <>
               <IconButton icon="sidebar" label={keys("Toggle sidebar (Ctrl+\\)")} active={sidebar} onClick={() => setSidebar(!sidebar)} />
+              {!multipleTabs && <div className="doc-title" title={doc.name}>
+                <span>{doc.name}</span>
+                {unsaved && <span className="dirty-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" />}
+              </div>}
             </>
           )}
         </div>
@@ -1118,6 +1123,9 @@ export default function App({ tabs, tabKey }: { tabs: DocumentTabs; tabKey: numb
             items={[
               ...(doc
                 ? ([
+                    { kind: "action", icon: "plus", label: "New tab", shortcut: keys("Ctrl T"), onSelect: () => tabs.library() },
+                    { kind: "action", icon: "close", label: "Close document", shortcut: keys("Ctrl W"), onSelect: () => void tabs.close(tabKey) },
+                    { kind: "divider" },
                     { kind: "action", icon: "download", label: "Save a copy", shortcut: keys("Ctrl S"), onSelect: download },
                     { kind: "action", icon: "print", label: "Print", shortcut: keys("Ctrl P"), onSelect: print },
                     { kind: "action", icon: "info", label: "Document info", onSelect: () => setDialog("info") },
@@ -1133,9 +1141,10 @@ export default function App({ tabs, tabKey }: { tabs: DocumentTabs; tabKey: numb
           />
         </div>
       </header>
-      {!focus && <DocumentTabBar tabs={tabs} tabKey={tabKey} />}
+      {!focus && multipleTabs && <DocumentTabBar tabs={tabs} tabKey={tabKey} />}
 
-      <div className="body" id="reader-panel" role="tabpanel" aria-label={doc?.name ?? "Library"}>
+      <div className="body" id="reader-panel" role={!focus && multipleTabs ? "tabpanel" : undefined}
+        aria-labelledby={!focus && multipleTabs ? "selected-document-tab" : undefined}>
         {doc && (
           <Sidebar
             key={doc.pdf.loadingTask.docId}

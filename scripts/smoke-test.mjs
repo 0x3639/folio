@@ -59,6 +59,17 @@ try {
   assert.match(await page.locator(".textLayer").first().innerText(), /A short tour of Folio/);
   console.log("ok  sample rendered with a text layer");
 
+  const docs = page.getByRole("tablist", { name: "Open documents" });
+  assert.equal(await page.locator(".document-tabs").count(), 0);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: /New tab/ }).click();
+  await docs.getByRole("tab", { name: "Library", selected: true }).waitFor();
+  assert.equal(await docs.getByRole("tab").count(), 2);
+  await docs.getByRole("button", { name: "Close Library" }).click();
+  await page.locator(".doc-title", { hasText: "Folio sample.pdf" }).waitFor();
+  assert.equal(await page.locator(".document-tabs").count(), 0);
+  console.log("ok  the tab strip appears for a second tab and disappears when one remains");
+
   // A signature is an unsaved edit that must survive a tab switch.
   const photo = await page.evaluate(() => {
     const canvas = Object.assign(document.createElement("canvas"), { width: 600, height: 200 });
@@ -101,7 +112,6 @@ try {
 
   const sample = await page.evaluate(async () => Array.from(new Uint8Array(await (await fetch("sample.pdf")).arrayBuffer())));
   const other = Buffer.concat([Buffer.from(sample), Buffer.from("\\n% Another PDF")]);
-  const docs = page.getByRole("tablist", { name: "Open documents" });
   const select = name => docs.getByRole("tab", { name, exact: true }).click();
   await page.getByTitle("Next page").click();
   // Stub the native confirmation only in this test window.
@@ -153,10 +163,13 @@ try {
   }, sample);
   await docs.getByRole("tab", { name: "Drop A.pdf", selected: true }).waitFor();
   assert.equal(await docs.getByRole("tab").count(), 5);
-  for (const name of ["Drop A.pdf", "Drop B.pdf", "One.pdf", "Two.pdf", "Another.pdf"]) {
+  for (const name of ["Drop A.pdf", "Drop B.pdf", "One.pdf", "Two.pdf"]) {
     const close = docs.getByRole("button", { name: "Close " + name, exact: true });
     await close.click(); await close.waitFor({ state: "detached" });
   }
+  await page.locator(".doc-title", { hasText: "Another.pdf" }).waitFor();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Close document/ }).click();
   await page.getByRole("button", { name: /Try a sample/ }).click();
   await page.locator(".textLayer span:not(.markedContent)").first().waitFor();
   console.log("ok  document tabs keep signatures and pages, confirm discard, and open multiple files");
@@ -237,7 +250,7 @@ try {
   await page.evaluate(() => { Worker.prototype.postMessage = window.folioPostMessage; });
   await page.evaluate(() => document.querySelector('.page[data-page-number="1"]').scrollIntoView());
   await page.waitForTimeout(800);
-  await docs.getByRole("button", { name: "Close Folio sample.pdf", exact: true }).click();
+  await page.keyboard.press("ControlOrMeta+w");
   await page.getByRole("button", { name: /Try a sample/ }).click();
   await page.locator(".textLayer span:not(.markedContent)").first().waitFor({ timeout: 30_000 });
   const copy = path.join(env.FOLIO_TEST_USER_DATA, "copy.pdf");
@@ -298,7 +311,7 @@ try {
   await page.locator('.freeTextEditor .internal[contenteditable="true"]').fill("Saved text box");
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.waitForTimeout(1000);
-  await docs.getByRole("button", { name: "Close Folio sample.pdf", exact: true }).click();
+  await page.keyboard.press("ControlOrMeta+w");
   await page.getByRole("button", { name: /Try a sample/ }).click();
   await page.locator(".freeTextEditor", { hasText: "Saved text box" }).waitFor({ timeout: 15_000 });
   console.log("ok  text box restored after reopening");

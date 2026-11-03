@@ -12,7 +12,6 @@ export function DocumentTabBar({ tabs, tabKey }: { tabs: ReaderContext["tabs"]; 
       if (tabs.keyboardFocus === tabKey) selected.current?.focus({ preventScroll: true });
     }
   }, [tabs.active, tabs.keyboardFocus, tabKey]);
-  if (tabs.all.length === 1 && !tabs.all[0].name) return null;
   return <nav className="document-tabs" aria-label="Documents">
     <div className="document-tab-list" role="tablist" aria-label="Open documents">
       {tabs.all.map(tab => {
