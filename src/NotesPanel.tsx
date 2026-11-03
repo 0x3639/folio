@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { keys } from "./platform";
-import { copyText } from "./clipboard";
+import { MoreMenu } from "./MoreMenu";
 import type { Mark, MarkupState } from "./markup";
 
 interface Props {
   state: MarkupState;
-  docName: string;
+  onExport: (format: "markdown" | "json") => void;
   persisted: boolean;
   onReveal: (id: string) => void;
   onNote: (id: string, note: string) => void;
@@ -53,24 +53,8 @@ function GrowingTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement
   return <textarea ref={ref} {...props} onInput={autoGrow} />;
 }
 
-function toMarkdown(docName: string, state: MarkupState) {
-  const lines = [`# Notes: ${docName.replace(/\.pdf$/i, "")}`, ""];
-  if (state.note.trim()) lines.push(state.note.trim(), "");
-  for (const mark of state.marks) {
-    if (mark.type === "highlight") {
-      lines.push(`> ${mark.text.replace(/\n+/g, " ")} (p. ${mark.page + 1})`);
-      if (mark.note) lines.push("", mark.note);
-      lines.push("");
-    } else if (mark.type === "freetext" && mark.text) {
-      lines.push(`- Text box (p. ${mark.page + 1}): ${mark.text}`, "");
-    }
-  }
-  return lines.join("\n").trim() + "\n";
-}
-
-export function NotesPanel({ state, docName, persisted, onReveal, onNote, onRemove, onDocNote, onAsk }: Props) {
+export function NotesPanel({ state, onExport, persisted, onReveal, onNote, onRemove, onDocNote, onAsk }: Props) {
   const docNote = useDebouncedField(state.note, onDocNote);
-  const [copy, setCopy] = useState<"idle" | "done" | "failed">("idle");
   const highlights = state.marks.filter((m) => m.type === "highlight" || (m.type === "freetext" && m.text));
   const other = state.marks.length - highlights.length;
 
@@ -78,21 +62,11 @@ export function NotesPanel({ state, docName, persisted, onReveal, onNote, onRemo
     <div className="notes-panel">
       <div className="notes-head">
         <span>{highlights.length ? `${highlights.length} highlight${highlights.length === 1 ? "" : "s"}` : "Notes"}</span>
-        <button
-          className="link small"
-          disabled={!highlights.length && !state.note.trim()}
-          onClick={async () => {
-            // Only confirm once the text has really reached the clipboard, and say so
-            // when it didn't instead of reporting a copy that never happened.
-            const ok = await copyText(toMarkdown(docName, state));
-            setCopy(ok ? "done" : "failed");
-            setTimeout(() => setCopy("idle"), ok ? 1500 : 2500);
-          }}
-          title="Copy all notes and highlights as Markdown"
-        >
-          <Icon name={copy === "done" ? "check" : copy === "failed" ? "close" : "copy"} size={13} />{" "}
-          {copy === "done" ? "Copied" : copy === "failed" ? "Copy failed" : "Copy all"}
-        </button>
+        <MoreMenu label="Export" items={[
+          { kind: "action", icon: "copy", label: "Copy Markdown", disabled: !state.marks.length && !docNote.value.trim(),
+            onSelect: () => onExport("markdown") },
+          { kind: "action", icon: "download", label: "Save JSON…", onSelect: () => onExport("json") },
+        ]} />
       </div>
 
       <GrowingTextarea

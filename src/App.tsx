@@ -20,6 +20,8 @@ import { Sidebar, type SidebarTab } from "./Sidebar";
 import { MarkupController, type Mark, type MarkupState } from "./markup";
 import { HighlightMenu, NoteBox, SelectionPopover, useTextSelection, type SelectionInfo } from "./Selection";
 import { NotesPanel } from "./NotesPanel";
+import { notesJson, notesMarkdown } from "./noteExport";
+import { copyText } from "./clipboard";
 import { imageRegions, trackPageImages } from "./nightImages";
 import { recognizeScannedPages } from "./pageOcr";
 import { ImageMenu, ImageViewer, type ImageTarget } from "./ImageViewer";
@@ -34,6 +36,7 @@ import { SettingsDialog } from "./SettingsDialog";
 import { ChangelogDialog } from "./ChangelogDialog";
 import { detectSignatureTargets, placeSignature, type SignatureTarget } from "./signatures";
 import { keepDrawingPointer } from "./drawing";
+import { drawShapes, type Shape } from "./shapes";
 import { enableWheelPaging } from "./wheelPaging";
 
 type Tool = "select" | "highlight" | "ink" | "freetext";
@@ -96,6 +99,15 @@ interface Pending {
 // SharedArrayBuffer, which pdf.js never hands out, but its types don't say so.)
 const pdfBlob = (bytes: Uint8Array) => new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/pdf" });
 
+function saveBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -137,6 +149,7 @@ export default function App() {
     catch { return false; }
   });
   const [tool, setTool] = useState<Tool>("select");
+  const [drawTool, setDrawTool] = useState<"Pen" | Shape>("Pen");
   const [colors, setColors] = useState<Partial<Record<Tool, string>>>({
     highlight: HIGHLIGHTS[0].hex,
     ink: INKS[0].hex,
@@ -560,6 +573,13 @@ export default function App() {
   };
   const startSigning = () => { chooseTool("select"); setSigning(true); };
 
+  useEffect(() => {
+    if (!doc || tool !== "ink" || drawTool === "Pen") return;
+    return drawShapes(containerRef.current!, viewerRef.current!, drawTool, colors.ink!, (page, data) => {
+      void markupRef.current!.addShape(page, drawTool, data).catch(() => flash("Couldn't add the shape"));
+    });
+  }, [doc, tool, drawTool, colors.ink, scale, rotation, flash]);
+
   const chooseColor = (hex: string) => {
     setColors((c) => ({ ...c, [tool]: hex }));
     const param = COLOR_PARAM[tool];
@@ -753,12 +773,24 @@ export default function App() {
 
   const copyName = pageOrder && doc ? doc.name.replace(/\.pdf$/i, "") + " (reordered).pdf" : doc?.name ?? "document.pdf";
   const saveBytes = (bytes: Uint8Array) => {
-    const url = URL.createObjectURL(pdfBlob(bytes));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = copyName.toLowerCase().endsWith(".pdf") ? copyName : `${copyName}.pdf`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    saveBlob(pdfBlob(bytes), copyName.toLowerCase().endsWith(".pdf") ? copyName : `${copyName}.pdf`);
+  };
+
+  const exportNotes = async (format: "markdown" | "json") => {
+    if (!doc) return;
+    const controller = markupRef.current!;
+    controller.sync();
+    try {
+      if (format === "markdown") {
+        const ok = await copyText(notesMarkdown(doc.name, controller.state));
+        if (docRef.current === doc) flash(ok ? "Markdown copied" : "Copy failed");
+      } else {
+        const json = await notesJson(doc, controller.state);
+        if (docRef.current === doc) saveBlob(new Blob([json], { type: "application/json" }), doc.name.replace(/\.pdf$/i, "") + ".notes.json");
+      }
+    } catch {
+      if (docRef.current === doc) flash("Couldn't export notes");
+    }
   };
 
   const download = async () => {
@@ -896,7 +928,7 @@ export default function App() {
       if (signing) return;
       const mod = e.ctrlKey || e.metaKey;
       const target = e.target as HTMLElement;
-      const typing = target.closest("input, textarea, [contenteditable=true], .freeTextEditor");
+      const typing = target.closest("input, textarea, select, [contenteditable=true], .freeTextEditor");
 
       if (mod && e.key === ",") {
         e.preventDefault();
@@ -1151,7 +1183,7 @@ export default function App() {
             notes={
               <NotesPanel
                 state={markup}
-                docName={doc.name}
+                onExport={exportNotes}
                 persisted={persistRef.current}
                 onReveal={(id) => markupRef.current!.reveal(id)}
                 onNote={(id, note) => markupRef.current!.setNote(id, note)}
@@ -1177,18 +1209,26 @@ export default function App() {
           )}
 
           {doc && isEditing && PALETTE[tool] && (
-            <div className="color-pill" role="radiogroup" aria-label="Color">
-              {PALETTE[tool]!.map((c) => (
-                <button
-                  key={c.hex}
-                  className={colors[tool] === c.hex ? "on" : ""}
-                  style={{ "--swatch": c.hex } as React.CSSProperties}
-                  onClick={() => chooseColor(c.hex)}
-                  title={c.name}
-                  role="radio"
-                  aria-checked={colors[tool] === c.hex}
-                />
-              ))}
+            <div className="color-pill" role="toolbar" aria-label="Annotation options">
+              {tool === "ink" && (
+                <select className="draw-tool" aria-label="Drawing tool" value={drawTool}
+                  onChange={e => setDrawTool(e.target.value as typeof drawTool)}>
+                  {["Pen", "Rectangle", "Oval", "Arrow"].map(name => <option key={name}>{name}</option>)}
+                </select>
+              )}
+              <div className="color-options" role="radiogroup" aria-label="Color">
+                {PALETTE[tool]!.map((c) => (
+                  <button
+                    key={c.hex}
+                    className={colors[tool] === c.hex ? "on" : ""}
+                    style={{ "--swatch": c.hex } as React.CSSProperties}
+                    onClick={() => chooseColor(c.hex)}
+                    title={c.name}
+                    role="radio"
+                    aria-checked={colors[tool] === c.hex}
+                  />
+                ))}
+              </div>
               <span className="divider" />
               <button className="pill-btn" onClick={() => busRef.current!.dispatch("editingaction", { source: null, name: "undo" })} title={keys("Undo (Ctrl+Z)")}>
                 <Icon name="undo" size={16} />

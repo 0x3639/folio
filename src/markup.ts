@@ -30,6 +30,7 @@ interface Editor {
   remove(): void;
   constructor: { _type?: string };
   __folioMark?: string;
+  __folioShape?: Mark["shape"];
 }
 interface EditorLayer {
   div: HTMLElement;
@@ -169,6 +170,7 @@ export class MarkupController {
           continue;
         }
         editor.__folioMark = mark.id;
+        editor.__folioShape = mark.shape;
         if (textBox) editor.isClone = true;
         layer.add(editor);
         // An empty editor would be thrown away by pdf.js (and its mark with it) at the next tool change.
@@ -228,6 +230,17 @@ export class MarkupController {
     return editors;
   }
 
+  async addShape(page: number, shape: NonNullable<Mark["shape"]>, data: Record<string, unknown>) {
+    const layer = this.#ui?.getLayer(page);
+    if (!layer) throw new Error("The page is not ready.");
+    const editor = await layer.deserialize(data);
+    if (this.#ui?.getLayer(page) !== layer) return;
+    if (!editor) throw new Error("The drawing could not be created.");
+    editor.__folioShape = shape;
+    layer.add(editor);
+    this.sync();
+  }
+
   scheduleSync() {
     window.clearTimeout(this.#syncTimer);
     this.#syncTimer = window.setTimeout(() => this.sync(), 250);
@@ -265,6 +278,7 @@ export class MarkupController {
       const mark: Mark = {
         id: editor.__folioMark,
         type,
+        ...(editor.__folioShape && { shape: editor.__folioShape }),
         page: editor.pageIndex,
         text,
         note: comment && !comment.deleted ? comment.text ?? "" : previous?.note ?? "",

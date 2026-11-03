@@ -86,13 +86,16 @@ URL opening, webpage conversion, and Word conversion require the desktop app. Fa
 - **Notes on passages:** type into the selection toolbar and press `Enter` to highlight with a note, or press `N`
   with text selected to focus the note box.
 - **Edit existing highlights:** click one to recolor it, edit its note, ask AI about the passage, or remove it.
-- **Freehand drawing:** choose **Draw** (`D`) and draw directly on the page in black, red, blue, green, or purple.
+- **Draw on a page:** choose **Draw** (`D`) for a freehand pen, rectangle, oval, or arrow. Pick a color, then drag
+  on the page. Shapes can be undone and are included when you save a PDF copy.
 - **Text boxes:** choose **Text** (`T`) to add text to a page, using the same ink palette.
 - **Undo and redo** annotation edits with the usual keyboard shortcuts; choose **Done**, `V`, or `Esc` to leave a
   drawing/text tool and return to selection.
 - **Notes tab:** review highlights, their notes, and text boxes; click an entry to jump to it, edit a highlight's note,
   delete an entry, or ask AI about a highlight. A separate notes box holds thoughts about the whole document.
-- **Copy all as Markdown:** copy document notes, highlighted passages, and text-box content with page references.
+- **Export reading notes:** in **Notes → Export**, copy Markdown or save a JSON file. JSON includes your notes,
+  highlights, text boxes, drawings and shapes with one-based page numbers, plus the PDF's outline bookmarks.
+  It includes stable annotation IDs, colors, and coordinates in unrotated PDF user space for use in other tools.
 - **Automatic local saving:** highlights, notes, drawings, and text boxes return when you reopen an
   ordinary, non-password-protected PDF. Use **Save a copy** to share page annotations with other readers.
 

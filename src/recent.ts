@@ -175,6 +175,7 @@ export async function removeRecent(id: string) {
 export interface StoredMark {
   id: string;
   type: "highlight" | "ink" | "freetext";
+  shape?: import("./shapes").Shape;
   page: number; // 0-based
   text: string;
   note: string;
