@@ -174,6 +174,51 @@ try {
   await page.locator(".textLayer span:not(.markedContent)").first().waitFor();
   console.log("ok  document tabs keep signatures and pages, confirm discard, and open multiple files");
 
+  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  await page.window.setViewportSize({ width: 420, height: viewport.height });
+  assert.ok(await page.locator(".topbar button").evaluateAll(buttons => buttons.every(button => {
+    const rect = button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+  })), "a toolbar button is covered at the minimum width");
+  await page.getByRole("button", { name: "Highlight", exact: true }).click();
+  await page.window.setViewportSize(viewport);
+  const textLayer = page.locator('.page[data-page-number="1"] .textLayer.highlighting');
+  await textLayer.waitFor();
+  await page.getByRole("radio", { name: "Green" }).click();
+  const line = textLayer.getByText(/Drag a PDF file anywhere/);
+  await line.scrollIntoViewIfNeeded();
+  const box = await line.boundingBox();
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + 1, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 1, y, { steps: 8 });
+  await page.waitForFunction(() => getSelection().toString().includes("Drag a PDF file anywhere"));
+  const passage = await page.evaluate(() => getSelection().toString().trim());
+  assert.equal(await page.locator(".highlightEditor").count(), 0);
+  await page.mouse.up();
+  await page.locator(".highlightEditor").waitFor();
+  await page.getByRole("radio", { name: "Pink" }).click();
+  await page.keyboard.down("Shift");
+  await textLayer.getByText(/page\. The sidebar on the left/).evaluate(span => {
+    const text = span.firstChild;
+    const start = text.textContent.indexOf("The sidebar");
+    getSelection().setBaseAndExtent(text, start, text, start + "The sidebar".length);
+  });
+  await page.waitForFunction(() => getSelection().toString() === "The sidebar");
+  assert.equal(await page.locator(".highlightEditor").count(), 1);
+  await page.keyboard.up("Shift");
+  await page.waitForFunction(() => document.querySelectorAll(".highlightEditor").length === 2);
+  assert.equal(await page.locator(".selection-popover").count(), 0);
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Select", pressed: true }).waitFor();
+  await page.getByRole("tab", { name: /Notes/ }).click();
+  for (const [quote, color] of [[passage, "#5edc9a"], ["The sidebar", "#ff8fc7"]]) {
+    const card = page.locator(".mark-card").filter({ hasText: quote });
+    assert.equal(await card.evaluate(el => el.style.getPropertyValue("--mark")), color);
+  }
+  await page.getByRole("tab", { name: /Pages/ }).click();
+  console.log("ok  Highlight mode marks consecutive selections on release in the chosen color");
+
   // Select a sentence and highlight it in one click.
   await page.evaluate(() => {
     const span = [...document.querySelectorAll(".textLayer span:not(.markedContent)")].find((s) => s.textContent.includes("A short tour"));
@@ -221,7 +266,7 @@ try {
   console.log("ok  a refused clipboard write is reported as Copy failed");
 
   await page.getByRole("button", { name: "Highlight yellow" }).click();
-  await page.waitForFunction(() => document.querySelectorAll(".highlightEditor").length === 1, null, { timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelectorAll(".highlightEditor").length === 3, null, { timeout: 15_000 });
   console.log("ok  highlight created");
 
   // A saved copy includes every saved mark, also on pages that haven't been drawn since the document was reopened.
@@ -246,7 +291,7 @@ try {
   });
   await page.locator(".selection-popover").waitFor();
   await page.getByRole("button", { name: "Highlight yellow" }).click();
-  await page.waitForFunction(() => document.querySelectorAll(".highlightEditor").length === 2, null, { timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelectorAll(".highlightEditor").length === 4, null, { timeout: 15_000 });
   await page.evaluate(() => { Worker.prototype.postMessage = window.folioPostMessage; });
   await page.evaluate(() => document.querySelector('.page[data-page-number="1"]').scrollIntoView());
   await page.waitForTimeout(800);
@@ -262,7 +307,7 @@ try {
   }, copy);
   await page.keyboard.press("ControlOrMeta+s");
   assert.equal(await app.evaluate(() => globalThis.folioCopySaved), "completed");
-  assert.equal(readFileSync(copy, "latin1").match(/\/Subtype\s*\/Highlight\b/g)?.length, 2);
+  assert.equal(readFileSync(copy, "latin1").match(/\/Subtype\s*\/Highlight\b/g)?.length, 4);
   console.log("ok  saved copy includes marks on pages not drawn yet");
 
   await page.getByRole("button", { name: "More" }).click();

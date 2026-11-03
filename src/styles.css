@@ -1465,6 +1465,18 @@ kbd {
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────── */
+/* Keep the tools clear of the native window controls at the minimum desktop width. */
+@media (max-width: 540px) {
+  .desktop .app:has(.topbar-center .segmented) { --topbar-h: 88px; }
+  .desktop .topbar:has(.segmented) { flex-wrap: wrap; align-content: center; }
+  .desktop .topbar-center:has(.segmented) {
+    order: 1;
+    flex-basis: 100%;
+    display: flex;
+    justify-content: center;
+  }
+}
+
 @media (max-width: 1080px) {
   .segmented button span {
     display: none;

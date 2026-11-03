@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.1
+
+- Choose **Highlight** in the toolbar to mark each passage as soon as you finish selecting it. Switch colors between passages, then choose **Done** or press `Esc` to return to reading.
+
 ## 1.13.0
 
 - Select or drop several PDFs to open them in one window. Each document keeps its page, zoom, and unsaved edits when you switch tabs.
