@@ -121,15 +121,15 @@ export class MarkupController {
   }
 
   /** Loads saved markup for a newly opened document. Password-protected documents aren't persisted. */
-  async load(docId: string, persist: boolean) {
+  async load(docId: string, persist: boolean, reading?: Pick<MarkupState, "note" | "bookmarkedPages">) {
     this.unload();
     const generation = this.#generation;
     this.#docId = docId;
     const saved = persist ? await getNotes(docId) : undefined;
     if (generation !== this.#generation) return;
     this.#persist = persist;
-    this.#note = saved?.note ?? "";
-    this.#bookmarkedPages = saved?.bookmarkedPages ?? [];
+    this.#note = reading?.note ?? saved?.note ?? "";
+    this.#bookmarkedPages = reading?.bookmarkedPages ?? saved?.bookmarkedPages ?? [];
     for (const mark of saved?.marks ?? []) {
       this.#known.set(mark.id, mark);
       const list = this.#pending.get(mark.page) ?? [];
@@ -137,6 +137,7 @@ export class MarkupController {
       this.#pending.set(mark.page, list);
     }
     this.#emit();
+    if (reading) this.#scheduleSave();
     // Pages that rendered before the saved data arrived.
     for (const page of [...this.#pending.keys()]) if (this.#ui?.getLayer(page)) void this.#restorePage(page);
   }

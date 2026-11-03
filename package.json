@@ -24,7 +24,9 @@
     "mammoth": "^1.13.0"
   },
   "devDependencies": {
+    "@embedpdf/pdfium": "2.15.1",
     "@tesseract.js-data/eng": "^1.0.0",
+    "@types/emscripten": "^1.41.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
@@ -32,6 +34,7 @@
     "electron-builder": "^26.18.0",
     "katex": "^0.19.1",
     "mdast-util-from-markdown": "^2.1.0",
+    "pdf-lib": "1.17.1",
     "pdfjs-dist": "^6.4.299",
     "playwright-core": "^1.64.1",
     "react": "^19.3.1",

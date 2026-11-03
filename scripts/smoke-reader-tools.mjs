@@ -150,7 +150,151 @@ async function captureDownload(app, file) {
   }, file);
 }
 
-export async function checkReaderTools(app, page, folder) {
+async function checkContentEditing(app, page, folder, shots) {
+  // Two identical text runs and two placements of one image, also reused on the second page.
+  const words = "BT /F 16 Tf 12 170 Td (Orig) Tj 29.34 0 Td (inal) Tj -29.34 -25 Td (Original) Tj ET";
+  const images = "% /Logo Do\n/Artifact << /Details (literal /Logo Do) >> BDC q 10 20 24 40 re W n "
+    + "40 0 0 40 10 20 cm /Logo Do Q EMC\nq 40 0 0 40 80 20 cm /Logo Do Q";
+  const pageDict = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources 10 0 R /Contents 9 0 R >>";
+  const stream = s => `<< /Length ${s.length} >>\nstream\n${s}\nendstream`;
+  const original = testPdf([
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>",
+    pageDict, pageDict,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length 7 >>\nstream\nff0000>\nendstream",
+    stream(words), stream(images), "[7 0 R 8 0 R]", "<< /Font << /F 5 0 R >> /XObject << /Logo 6 0 R >> >>",
+  ]);
+  await app.evaluate(({ BrowserWindow }, file) => BrowserWindow.getAllWindows()[0].webContents.send(
+    "folio:open-file", { name: "Objects.pdf", data: Buffer.from(file) }), original);
+  await page.window.waitForFunction(() => document.title.startsWith("Objects.pdf"));
+  const sidebar = page.getByRole("button", { name: /Toggle sidebar/ });
+  if (await sidebar.getAttribute("aria-pressed") !== "true") await sidebar.click();
+  await page.getByRole("tab", { name: "Pages", exact: true }).click();
+  await page.getByRole("button", { name: "Bookmark page 2", exact: true }).click();
+  const openEditor = async () => {
+    await page.getByRole("button", { name: "Edit mode", exact: true }).click();
+    assert.equal(await page.getByRole("dialog").count(), 0);
+  };
+  const sheet = page.locator('.page[data-page-number="1"]');
+  const item = name => sheet.getByRole("button", { name, exact: true });
+  const input = sheet.getByRole("textbox", { name: "Edit text on page" });
+  const save = page.getByRole("button", { name: "Save copy", exact: true });
+  await sheet.locator(".textLayer").getByText("Original", { exact: true }).first().waitFor();
+  await page.screenshot({ path: path.join(shots, "before-pdf-edit.png") });
+  await openEditor();
+  const rotation = page.getByTitle("Rotate (R)");
+  await rotation.click();
+  await page.keyboard.press("ControlOrMeta+=");
+  const checkRotatedTarget = () => page.waitForFunction(() => {
+    const p = document.querySelector('.page[data-page-number="1"]');
+    const canvas = p?.querySelector(".canvasWrapper")?.getBoundingClientRect();
+    const logo = p?.querySelector('button[aria-label="Image 1"]')?.getBoundingClientRect();
+    return canvas && logo && Math.abs((logo.left - canvas.left) / canvas.width - 0.1) < 0.012
+      && Math.abs((logo.top - canvas.top) / canvas.height - 0.05) < 0.012;
+  }, null, { timeout: 15_000 });
+  await checkRotatedTarget();
+  const pageWidth = await sheet.locator(".canvasWrapper").evaluate(el => el.getBoundingClientRect().width);
+  await item("Original").first().click();
+  await input.fill("Cancel me"); await input.press("Escape");
+  assert.equal(await input.count(), 0);
+  await item("Original").first().click();
+  await input.fill("𐍈"); await input.press("Enter");
+  await page.getByText(/This font can.t display all of those characters/).waitFor();
+  await input.fill("Revised");
+  await item("Image 1").click();
+  await item("Revised").waitFor();
+  await sheet.locator(".textLayer").getByText("Revised", { exact: true }).waitFor();
+  await sheet.getByRole("button", { name: /Replace image/ }).waitFor();
+  await checkRotatedTarget();
+  assert.ok(Math.abs(await sheet.locator(".canvasWrapper").evaluate(el => el.getBoundingClientRect().width) - pageWidth) < 2);
+  const png = await page.evaluate(() => {
+    const canvas = Object.assign(document.createElement("canvas"), { width: 2, height: 2 });
+    const g = canvas.getContext("2d");
+    g.fillStyle = "#0000ff"; g.fillRect(0, 0, 2, 2);
+    return canvas.toDataURL().split(",")[1];
+  });
+  await sheet.getByLabel("Replacement image").setInputFiles({ name: "blue.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
+  await page.getByRole("button", { name: "Exit edit mode" }).click();
+  await page.getByRole("button", { name: "Edit mode", exact: true }).waitFor();
+  assert.equal(await sheet.locator(".folio-content-layer").count(), 0);
+  await openEditor();
+  const file = path.join(folder, "edited.pdf");
+  await captureDownload(app, file);
+  await save.click();
+  assert.equal(await app.evaluate(() => globalThis.folioReordered), "completed");
+  await page.window.waitForFunction(() => document.title.startsWith("Objects (edited).pdf"));
+  await page.getByRole("button", { name: "Bookmark page 2", pressed: true }).waitFor();
+  // Read and rasterize the downloaded bytes with the independent reader, including the untouched page.
+  const result = await page.evaluate(async bytes => {
+    const task = pdfjsLib.getDocument({ data: Uint8Array.from(bytes) });
+    const pdf = await task.promise;
+    try {
+      const pages = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const p = await pdf.getPage(i), canvas = document.createElement("canvas");
+        canvas.width = 200; canvas.height = 200;
+        await p.render({ canvas, viewport: p.getViewport({ scale: 1 }) }).promise;
+        const g = canvas.getContext("2d");
+        pages.push({ text: (await p.getTextContent()).items.map(x => x.str).filter(Boolean),
+          images: [30, 45, 100].map(x => [...g.getImageData(x, 160, 1, 1).data]), annotations: (await p.getAnnotations()).length });
+      }
+      return pages;
+    } finally { await task.destroy(); }
+  }, Array.from(readFileSync(file)));
+  const red = [255, 0, 0, 255], blue = [0, 0, 255, 255], white = [255, 255, 255, 255];
+  assert.deepEqual(result, [
+    { text: ["Revised", "Original"], images: [blue, white, red], annotations: 0 },
+    { text: ["Original", "Original"], images: [red, white, red], annotations: 0 },
+  ]);
+  console.log("ok  edited copy contains replacement text and image pixels only at the chosen placements");
+
+  await openEditor();
+  await item("Original").click();
+  await input.fill("");
+  await captureDownload(app, path.join(folder, "removed-text.pdf"));
+  await page.keyboard.press("ControlOrMeta+s");
+  assert.equal(await app.evaluate(() => globalThis.folioReordered), "completed");
+  await page.window.waitForFunction(() => document.title.startsWith("Objects (edited) (edited).pdf"));
+  const removed = page.locator('.page[data-page-number="1"] .textLayer');
+  await removed.getByText("Revised", { exact: true }).waitFor();
+  assert.equal((await removed.innerText()).trim(), "Revised");
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Version history" }).click();
+  const history = page.getByRole("complementary", { name: "Version history" });
+  await history.getByRole("heading", { name: "Version 3 This PDF" }).waitFor();
+  assert.equal(await history.locator(".version-entry").count(), 3);
+  await history.getByText("blue.png").waitFor();
+  await page.screenshot({ path: path.join(shots, "after-pdf-edit.png") });
+  assert.equal(await history.locator("ins").innerText(), "Revised");
+  const recovered = path.join(folder, "original-version.pdf");
+  await captureDownload(app, recovered);
+  await history.getByRole("button", { name: "Download version 1" }).click();
+  assert.equal(await app.evaluate(() => globalThis.folioReordered), "completed");
+  assert.deepEqual(readFileSync(recovered), Buffer.from(original));
+  await history.getByRole("button", { name: "Open version 1" }).click();
+  await page.window.waitForFunction(() => document.title.startsWith("Objects.pdf"));
+  await sheet.locator(".textLayer").getByText("Original", { exact: true }).first().waitFor();
+  console.log("ok  version history groups edits by save and recovers the exact original");
+
+  await app.evaluate(({ BrowserWindow }, data) => BrowserWindow.getAllWindows()[0].webContents.send(
+    "folio:open-file", { name: "Text runs.pdf", data: Buffer.concat([Buffer.from(data), Buffer.from("\n% Inline editing fixture\n")]) }),
+    await page.evaluate(async () => Array.from(new Uint8Array(await (await fetch("sample.pdf")).arrayBuffer()))));
+  await page.window.waitForFunction(() => document.title.startsWith("Text runs.pdf"));
+  const number = page.getByLabel("Page number", { exact: true });
+  await number.fill("1"); await number.press("Enter");
+  await openEditor();
+  await sheet.getByRole("button", { name: /A short tour of Folio/ }).first().click();
+  await input.fill("A tour of Folio"); await input.press("Enter");
+  await item("A tour of Folio").waitFor();
+  await captureDownload(app, path.join(folder, "edited-sample.pdf"));
+  await save.click();
+  assert.equal(await app.evaluate(() => globalThis.folioReordered), "completed");
+  await page.window.waitForFunction(() => document.title.startsWith("Text runs (edited).pdf"));
+  await page.locator('.page[data-page-number="1"] .textLayer').getByText("A tour of Folio", { exact: true }).waitFor();
+  console.log("ok  fragmented embedded-font text in Folio's sample edits as a line and reopens in the reader");
+}
+
+export async function checkReaderTools(app, page, folder, shots) {
   const settings = () => page.keyboard.press(process.platform === "darwin" ? "Meta+Comma" : "Control+Comma");
   const wheelSwitch = page.getByRole("switch", { name: "Scroll one page at a time" });
   const wheel = options => page.locator(".viewer-container").evaluate((el, options) =>
@@ -276,4 +420,5 @@ export async function checkReaderTools(app, page, folder) {
   assert.equal(await page.locator('.page[data-page-number="2"] .textWidgetAnnotation input').inputValue(), "A filled field");
   console.log("ok  the normal Save shortcut and Open reordered copy preserve filled form fields");
   await checkScanSelection(app, page);
+  await checkContentEditing(app, page, folder, shots);
 }
