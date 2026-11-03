@@ -82,6 +82,8 @@ URL opening, webpage conversion, and Word conversion require the desktop app. Fa
   Once it clears, drag across the words to copy, highlight, or ask about a passage. Recognition runs offline.
 - **One-click highlights:** select text, then choose yellow, green, blue, pink, or red from the selection toolbar;
   `H` applies the current highlight color.
+- Choose **Highlight** in the toolbar to mark each passage in the current color as soon as you select it.
+  Choose **Done** or press `Esc` to return to reading.
 - **Notes on passages:** type into the selection toolbar and press `Enter` to highlight with a note, or press `N`
   with text selected to focus the note box.
 - **Edit existing highlights:** click one to recolor it, edit its note, ask AI about the passage, or remove it.
@@ -180,7 +182,7 @@ On macOS, use `⌘` wherever this table says `Ctrl`. Press `?` with a document o
 | New tab / close tab | `Ctrl+T` / `Ctrl+W` |
 | Next tab / previous tab (Control on all platforms) | `Control+Tab` / `Control+Shift+Tab` |
 | Find / next match / previous match | `Ctrl+F` / `Enter` / `Shift+Enter` |
-| Highlight selection / write a note | `H` / `N` |
+| Highlight selection or enter Highlight mode / write a note | `H` / `N` |
 | Remove a clicked highlight | `Delete` |
 | Select / draw / add text | `V` / `D` / `T` |
 | Undo / redo annotation edits | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` |
