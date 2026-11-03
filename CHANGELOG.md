@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.14.0
+
+- Bookmark a page with the ribbon beside its thumbnail in **Pages**. Choose **Bookmarked** to see your saved pages and jump to one.
+- Choose **Draw** to add rectangles, ovals, and arrows in your preferred ink color. **Save a copy** includes them in the PDF.
+- In **Notes → Export**, copy your reading notes as Markdown or save them as JSON. The JSON includes page numbers, bookmarks, highlight colors, and drawing coordinates.
+
 ## 1.13.1
 
 - Choose **Highlight** in the toolbar to mark each passage as soon as you finish selecting it. Switch colors between passages, then choose **Done** or press `Esc` to return to reading.
