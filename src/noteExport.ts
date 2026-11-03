@@ -1,7 +1,7 @@
 import type { Mark, MarkupState } from "./markup";
 import type { OutlineItem, PDFDocumentProxy } from "./pdf";
 
-export function notesMarkdown(name: string, { note, marks }: MarkupState) {
+export function notesMarkdown(name: string, { note, marks, bookmarkedPages }: MarkupState) {
   const lines = [`# Notes: ${name.replace(/\.pdf$/i, "")}`, ""];
   if (note.trim()) lines.push(note.trim(), "");
   for (const mark of marks) {
@@ -16,6 +16,7 @@ export function notesMarkdown(name: string, { note, marks }: MarkupState) {
       lines.push(`- ${mark.shape ?? "Drawing"} (${page})`, "");
     }
   }
+  if (bookmarkedPages?.length) lines.push("## Bookmarked pages", "", ...bookmarkedPages.map(n => `- p. ${n}`));
   return lines.join("\n").trim() + "\n";
 }
 
@@ -56,6 +57,6 @@ export async function notesJson(doc: { name: string; id: string; pdf: PDFDocumen
   return JSON.stringify({
     schemaVersion: 1, document: { id: doc.id, name: doc.name, pageCount: doc.pdf.numPages },
     coordinateSpace: "PDF user space on the unrotated page (x increases right, y increases up)",
-    documentNote: state.note, annotations: state.marks.map(annotation), bookmarks,
+    documentNote: state.note, annotations: state.marks.map(annotation), bookmarks, bookmarkedPages: state.bookmarkedPages ?? [],
   }, null, 2) + "\n";
 }

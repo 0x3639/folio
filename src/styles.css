@@ -347,6 +347,21 @@ kbd {
   padding: 8px 10px;
   border-radius: 10px;
 }
+.thumb-row { display: flex; flex: none; flex-direction: column; align-items: center; }
+.thumb-row > .thumb:only-child { height: 100%; }
+.thumb-caption { display: flex; align-items: center; gap: 2px; }
+.thumb-caption .thumb-num { cursor: pointer; }
+.thumb-bookmark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--text-2);
+}
+.thumb-bookmark:hover { background: var(--hover); }
+.thumb-bookmark[aria-pressed="true"] { color: var(--accent-text); }
+.thumb-bookmark[aria-pressed="true"] svg { fill: currentColor; }
 .thumb-frame {
   position: relative;
   border-radius: 3px;
@@ -376,7 +391,7 @@ kbd {
   padding: 1px 7px;
   border-radius: 6px;
 }
-.thumb.on .thumb-num {
+.thumb.on .thumb-num, .thumb.on + .thumb-caption .thumb-num {
   color: #fff;
   background: var(--accent);
 }

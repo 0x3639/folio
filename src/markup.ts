@@ -54,6 +54,7 @@ const newId = () => crypto.randomUUID();
 export interface MarkupState {
   marks: Mark[];
   note: string;
+  bookmarkedPages: number[] | null;
 }
 
 export class MarkupController {
@@ -64,6 +65,7 @@ export class MarkupController {
   #generation = 0;
   #persist = false;
   #note = "";
+  #bookmarkedPages: number[] | null = null;
   /** Saved marks whose page hasn't rendered yet, keyed by page index. */
   #pending = new Map<number, Mark[]>();
   /** Last known record for every mark (text, note, created time survive re-serialization). */
@@ -105,7 +107,7 @@ export class MarkupController {
   }
 
   get state(): MarkupState {
-    return { marks: this.#sorted(), note: this.#note };
+    return { marks: this.#sorted(), note: this.#note, bookmarkedPages: this.#bookmarkedPages };
   }
 
   /** Loads saved markup for a newly opened document. Password-protected documents aren't persisted. */
@@ -117,6 +119,7 @@ export class MarkupController {
     if (generation !== this.#generation) return;
     this.#persist = persist;
     this.#note = saved?.note ?? "";
+    this.#bookmarkedPages = saved?.bookmarkedPages ?? [];
     for (const mark of saved?.marks ?? []) {
       this.#known.set(mark.id, mark);
       const list = this.#pending.get(mark.page) ?? [];
@@ -145,6 +148,7 @@ export class MarkupController {
     this.#pending.clear();
     this.#known.clear();
     this.#note = "";
+    this.#bookmarkedPages = null;
     this.#emit();
   }
 
@@ -323,7 +327,8 @@ export class MarkupController {
   flush() {
     window.clearTimeout(this.#saveTimer);
     if (!this.#persist || !this.#docId) return;
-    const notes: DocNotes = { id: this.#docId, note: this.#note, marks: [...this.#known.values()], updatedAt: Date.now() };
+    const notes: DocNotes = { id: this.#docId, note: this.#note, marks: [...this.#known.values()],
+      bookmarkedPages: this.#bookmarkedPages ?? [], updatedAt: Date.now() };
     void saveNotes(notes);
   }
 
@@ -461,6 +466,16 @@ export class MarkupController {
 
   setDocNote(note: string) {
     this.#note = note;
+    this.#emit();
+    this.#scheduleSave();
+  }
+
+  toggleBookmark(page: number) {
+    const pages = this.#bookmarkedPages;
+    if (!pages || !Number.isInteger(page) || page < 1 || page > this.#viewer.pagesCount) return;
+    this.#bookmarkedPages = pages.includes(page)
+      ? pages.filter(n => n !== page)
+      : [...pages, page].sort((a, b) => a - b);
     this.#emit();
     this.#scheduleSave();
   }

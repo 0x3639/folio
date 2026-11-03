@@ -58,6 +58,23 @@ try {
   assert.match(await page.locator(".textLayer").first().innerText(), /A short tour of Folio/);
   console.log("ok  sample rendered with a text layer");
 
+  const sidebarToggle = page.getByRole("button", { name: /Toggle sidebar/ });
+  const sidebarWasOpen = await sidebarToggle.getAttribute("aria-pressed") === "true";
+  if (!sidebarWasOpen) await sidebarToggle.click();
+  await page.getByRole("tab", { name: "Pages" }).click();
+  const bookmark = page.getByRole("button", { name: "Bookmark page 2", exact: true });
+  await bookmark.click();
+  assert.equal(await bookmark.getAttribute("aria-pressed"), "true");
+  assert.equal(await page.getByRole("textbox", { name: "Page number" }).inputValue(), "1");
+  await page.getByTitle("Back to library").click();
+  await page.getByRole("button", { name: /Try a sample/ }).click();
+  await page.getByRole("button", { name: "Bookmark page 2", pressed: true }).waitFor();
+  await bookmark.press("Enter");
+  assert.equal(await bookmark.getAttribute("aria-pressed"), "false");
+  await bookmark.click();
+  if (!sidebarWasOpen) await sidebarToggle.click();
+  console.log("ok  a sidebar bookmark persists on its own and toggling it leaves the current page in place");
+
   // Opening another document (here from the file manager) asks first when there's unsaved work, a placed signature,
   // and keeps it if the reader says no.
   const photo = await page.evaluate(() => {
@@ -257,7 +274,6 @@ try {
   console.log("ok  all three shapes survive reopening and are embedded in the saved PDF");
   console.log("ok  saved copy includes marks on pages not drawn yet");
 
-  const sidebarToggle = page.getByRole("button", { name: /Toggle sidebar/ });
   if (await sidebarToggle.getAttribute("aria-pressed") !== "true") await sidebarToggle.click();
   await page.getByRole("tab", { name: /^Notes/ }).click();
   await page.getByLabel("Notes about this document").fill("Compare these passages.");
@@ -278,6 +294,7 @@ try {
   assert.equal(exported.documentNote, "Compare these passages.");
   assert.equal(exported.document.pageCount, lastPage);
   assert.ok(exported.bookmarks.some(b => b.page >= 1));
+  assert.deepEqual(exported.bookmarkedPages, [2]);
   assert.equal(new Set(exported.annotations.map(a => a.id)).size, exported.annotations.length);
   assert.ok(exported.annotations.some(a => a.type === "highlight" && a.page === lastPage && a.quadPoints.length >= 8));
   const shapes = exported.annotations.filter(a => a.type === "shape");
@@ -290,6 +307,7 @@ try {
   await page.getByRole("button", { name: "Export" }).click();
   await page.getByRole("menuitem", { name: "Copy Markdown" }).click();
   assert.match(await page.evaluate(() => window.folioMarkdown), /Compare these passages\./);
+  assert.match(await page.evaluate(() => window.folioMarkdown), /## Bookmarked pages\n\n- p\. 2/);
   await page.evaluate(() => {
     if (window.folioOriginalClipboard) Object.defineProperty(navigator.clipboard, "writeText", window.folioOriginalClipboard);
     else delete navigator.clipboard.writeText;

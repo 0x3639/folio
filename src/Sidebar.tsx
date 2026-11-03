@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { renderThumbnail, type OutlineItem, type PDFDocumentProxy } from "./pdf";
 import { Icon } from "./icons";
 
@@ -7,6 +7,8 @@ interface Props {
   page: number;
   rotation: number;
   onSelectPage: (n: number) => void;
+  bookmarkedPages: number[] | null;
+  onToggleBookmark: (n: number) => void;
   onSelectDest: (dest: unknown) => void;
   order: number[] | null;
   onOrder: (order: number[] | null) => void;
@@ -21,7 +23,7 @@ interface Props {
 export type SidebarTab = "pages" | "outline" | "notes";
 
 export function Sidebar({ pdf, page, rotation, onSelectPage, onSelectDest, order, onOrder, onSaveOrder, onOpenCopy,
-  tab, onTab: setTab, notes, noteCount }: Props) {
+  tab, onTab: setTab, notes, noteCount, bookmarkedPages, onToggleBookmark }: Props) {
   const [outline, setOutline] = useState<OutlineItem[] | null>(null);
 
   useEffect(() => {
@@ -50,7 +52,8 @@ export function Sidebar({ pdf, page, rotation, onSelectPage, onSelectDest, order
         {tab === "notes" ? (
           notes
         ) : tab === "pages" ? (
-          <Thumbnails pdf={pdf} page={page} rotation={rotation} onSelect={onSelectPage} />
+          <Thumbnails pdf={pdf} page={page} rotation={rotation} onSelect={onSelectPage}
+            bookmarkedPages={bookmarkedPages} onToggleBookmark={onToggleBookmark} />
         ) : outline === null ? null : outline.length === 0 ? (
           <div className="empty-outline">
             <Icon name="list" size={22} />
@@ -171,9 +174,11 @@ function PageOrganizer({ pdf, page, rotation, onSelect, order, onOrder, onSave, 
   );
 }
 
-function Thumbnails({ pdf, page, rotation, onSelect, order, onMove }: ThumbnailProps & {
+function Thumbnails({ pdf, page, rotation, onSelect, order, onMove, bookmarkedPages, onToggleBookmark }: ThumbnailProps & {
   order?: number[];
   onMove?: (source: number, to: number) => void;
+  bookmarkedPages?: Props["bookmarkedPages"];
+  onToggleBookmark?: Props["onToggleBookmark"];
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const dragType = `application/x-folio-page-${pdf.loadingTask.docId.toLowerCase()}`;
@@ -256,6 +261,7 @@ function Thumbnails({ pdf, page, rotation, onSelect, order, onMove }: ThumbnailP
         const index = range.start + i;
         const n = order?.[index] ?? index + 1;
         return <Thumb key={`${n}-${rotation}`} pdf={pdf} n={n} ratio={ratio} rotation={rotation} active={page === n}
+          bookmarked={bookmarkedPages?.includes(n)} onToggleBookmark={onToggleBookmark}
           position={order ? index + 1 : undefined} draggable={!!onMove} dropTarget={dropTarget === n} onSelect={onSelect} />;
       })}
       <div aria-hidden="true" style={{ height: Math.max(0, pdf.numPages - range.end) * rowHeight, flexShrink: 0 }} />
@@ -275,6 +281,8 @@ const Thumb = memo(function Thumb({
   draggable,
   dropTarget,
   onSelect,
+  bookmarked,
+  onToggleBookmark,
 }: {
   pdf: PDFDocumentProxy;
   n: number;
@@ -285,7 +293,10 @@ const Thumb = memo(function Thumb({
   draggable: boolean;
   dropTarget: boolean;
   onSelect: (n: number) => void;
+  bookmarked?: boolean;
+  onToggleBookmark?: Props["onToggleBookmark"];
 }) {
+  const id = useId();
   const ref = useRef<HTMLButtonElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
@@ -313,13 +324,22 @@ const Thumb = memo(function Thumb({
   }, [pdf, n, rotation]);
 
   return (
-    <button ref={ref} data-page={n} draggable={draggable} className={`thumb ${active ? "on" : ""} ${dropTarget ? "drop-target" : ""}`}
-      style={{ height: Math.ceil(THUMB_W * ratio) + 48, flexShrink: 0 }} onClick={() => onSelect(n)}
-      aria-label={position ? `Page ${n}, position ${position}` : `Page ${n}`}>
-      <div className="thumb-frame" style={{ width: THUMB_W, height: THUMB_W * ratio, flexShrink: 0 }}>
-        <canvas ref={canvasRef} style={{ opacity: ready ? 1 : 0 }} />
-      </div>
-      <span className="thumb-num">{position ? `${position} · Page ${n}` : n}</span>
-    </button>
+    <div className="thumb-row" style={{ height: Math.ceil(THUMB_W * ratio) + 48 }}>
+      <button ref={ref} id={id} data-page={n} draggable={draggable} className={`thumb ${active ? "on" : ""} ${dropTarget ? "drop-target" : ""}`}
+        onClick={() => onSelect(n)} aria-label={position ? `Page ${n}, position ${position}` : `Page ${n}`}>
+        <span className="thumb-frame" style={{ width: THUMB_W, height: THUMB_W * ratio, flexShrink: 0 }}>
+          <canvas ref={canvasRef} style={{ opacity: ready ? 1 : 0 }} />
+        </span>
+        {position && <span className="thumb-num">{position} · Page {n}</span>}
+      </button>
+      {onToggleBookmark && <div className="thumb-caption">
+        <label className="thumb-num" htmlFor={id}>{n}</label>
+        <button type="button" className="thumb-bookmark" disabled={bookmarked === undefined}
+          aria-label={`Bookmark page ${n}`} aria-pressed={bookmarked ?? false}
+          title={bookmarked ? `Remove bookmark from page ${n}` : `Bookmark page ${n}`} onClick={() => onToggleBookmark(n)}>
+          <Icon name="bookmark" size={15} />
+        </button>
+      </div>}
+    </div>
   );
 });

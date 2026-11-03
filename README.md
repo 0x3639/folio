@@ -67,6 +67,9 @@ URL opening, webpage conversion, and Word conversion require the desktop app. Fa
   to a page. Enable **Settings → Reading → Scroll one page at a time** to turn pages with the mouse wheel.
 - **Pages and Outline tabs:** browse page thumbnails or the PDF's existing outline/bookmarks; hide the sidebar when
   you want more reading space.
+- **Personal bookmarks:** click the ribbon beside a page number in **Pages** to save or remove a bookmark without
+  leaving your current page. These bookmarks are included in Markdown and JSON exports. Folio remembers them locally
+  when you reopen a PDF, except for password-protected documents.
 - **Reorder pages** from either sidebar tab. Drag thumbnails or enter a new position, then save and open the reordered PDF copy.
 - **Search as you type:** match case or whole words, see the current match and total count, browse per-page snippets
   and match counts, and move between matches with `Enter` / `Shift+Enter`.

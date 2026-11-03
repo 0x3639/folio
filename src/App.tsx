@@ -175,7 +175,7 @@ export default function App() {
   const [signing, setSigning] = useState(false);
   const [signatureTargets, setSignatureTargets] = useState<SignatureTarget[]>([]);
   const [signatureDismissed, setSignatureDismissed] = useState(false);
-  const [markup, setMarkup] = useState<MarkupState>({ marks: [], note: "" });
+  const [markup, setMarkup] = useState<MarkupState>({ marks: [], note: "", bookmarkedPages: null });
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("pages");
   const [noteBox, setNoteBox] = useState<{ markId: string; anchor: { x: number; top: number; bottom: number }; quote: string; initial: string } | null>(null);
   const [stageWidth, setStageWidth] = useState(800);
@@ -1170,6 +1170,8 @@ export default function App() {
             page={page}
             rotation={rotation}
             onSelectPage={goTo}
+            bookmarkedPages={markup.bookmarkedPages}
+            onToggleBookmark={n => markupRef.current!.toggleBookmark(n)}
             order={pageDraft?.order ?? null}
             onOrder={order => setPageDraft(order ? { order } : null)}
             onSaveOrder={download}

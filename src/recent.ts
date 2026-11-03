@@ -189,6 +189,7 @@ export interface DocNotes {
   id: string;
   note: string;
   marks: StoredMark[];
+  bookmarkedPages?: number[]; // One-based, absent in older records.
   updatedAt: number;
 }
 
@@ -202,7 +203,7 @@ export async function getNotes(id: string): Promise<DocNotes | undefined> {
 
 export async function saveNotes(notes: DocNotes) {
   try {
-    if (!notes.note.trim() && notes.marks.length === 0) await tx("readwrite", (s) => s.delete(notes.id), NOTES);
+    if (!notes.note.trim() && !notes.marks.length && !notes.bookmarkedPages?.length) await tx("readwrite", (s) => s.delete(notes.id), NOTES);
     else await tx("readwrite", (s) => s.put(notes), NOTES);
   } catch {
     /* best-effort, like Recent */
