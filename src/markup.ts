@@ -31,6 +31,7 @@ interface Editor {
   constructor: { _type?: string };
   __folioMark?: string;
   __folioText?: string;
+  __folioShape?: Mark["shape"];
 }
 interface EditorLayer {
   div: HTMLElement;
@@ -56,6 +57,7 @@ const newId = () => crypto.randomUUID();
 export interface MarkupState {
   marks: Mark[];
   note: string;
+  bookmarkedPages: number[] | null;
 }
 
 export class MarkupController {
@@ -66,6 +68,7 @@ export class MarkupController {
   #generation = 0;
   #persist = false;
   #note = "";
+  #bookmarkedPages: number[] | null = null;
   /** Saved marks whose page hasn't rendered yet, keyed by page index. */
   #pending = new Map<number, Mark[]>();
   /** Last known record for every mark (text, note, created time survive re-serialization). */
@@ -110,7 +113,7 @@ export class MarkupController {
   }
 
   get state(): MarkupState {
-    return { marks: this.#sorted(), note: this.#note };
+    return { marks: this.#sorted(), note: this.#note, bookmarkedPages: this.#bookmarkedPages };
   }
 
   clearEditorSelection() {
@@ -126,6 +129,7 @@ export class MarkupController {
     if (generation !== this.#generation) return;
     this.#persist = persist;
     this.#note = saved?.note ?? "";
+    this.#bookmarkedPages = saved?.bookmarkedPages ?? [];
     for (const mark of saved?.marks ?? []) {
       this.#known.set(mark.id, mark);
       const list = this.#pending.get(mark.page) ?? [];
@@ -154,6 +158,7 @@ export class MarkupController {
     this.#pending.clear();
     this.#known.clear();
     this.#note = "";
+    this.#bookmarkedPages = null;
     this.#emit();
   }
 
@@ -180,6 +185,7 @@ export class MarkupController {
         }
         editor.__folioMark = mark.id;
         if (mark.type === "highlight") editor.__folioText = mark.text;
+        editor.__folioShape = mark.shape;
         if (textBox) editor.isClone = true;
         layer.add(editor);
         // An empty editor would be thrown away by pdf.js (and its mark with it) at the next tool change.
@@ -239,6 +245,17 @@ export class MarkupController {
     return editors;
   }
 
+  async addShape(page: number, shape: NonNullable<Mark["shape"]>, data: Record<string, unknown>) {
+    const layer = this.#ui?.getLayer(page);
+    if (!layer) throw new Error("The page is not ready.");
+    const editor = await layer.deserialize(data);
+    if (this.#ui?.getLayer(page) !== layer) return;
+    if (!editor) throw new Error("The drawing could not be created.");
+    editor.__folioShape = shape;
+    layer.add(editor);
+    this.sync();
+  }
+
   scheduleSync() {
     window.clearTimeout(this.#syncTimer);
     this.#syncTimer = window.setTimeout(() => this.sync(), 250);
@@ -274,6 +291,7 @@ export class MarkupController {
       const mark: Mark = {
         id: editor.__folioMark,
         type,
+        ...(editor.__folioShape && { shape: editor.__folioShape }),
         page: editor.pageIndex,
         text,
         note: comment && !comment.deleted ? comment.text ?? "" : previous?.note ?? "",
@@ -318,7 +336,8 @@ export class MarkupController {
   flush() {
     window.clearTimeout(this.#saveTimer);
     if (!this.#persist || !this.#docId) return;
-    const notes: DocNotes = { id: this.#docId, note: this.#note, marks: [...this.#known.values()], updatedAt: Date.now() };
+    const notes: DocNotes = { id: this.#docId, note: this.#note, marks: [...this.#known.values()],
+      bookmarkedPages: this.#bookmarkedPages ?? [], updatedAt: Date.now() };
     return saveNotes(notes);
   }
 
@@ -456,6 +475,16 @@ export class MarkupController {
 
   setDocNote(note: string) {
     this.#note = note;
+    this.#emit();
+    this.#scheduleSave();
+  }
+
+  toggleBookmark(page: number) {
+    const pages = this.#bookmarkedPages;
+    if (!pages || !Number.isInteger(page) || page < 1 || page > this.#viewer.pagesCount) return;
+    this.#bookmarkedPages = pages.includes(page)
+      ? pages.filter(n => n !== page)
+      : [...pages, page].sort((a, b) => a - b);
     this.#emit();
     this.#scheduleSave();
   }

@@ -2,12 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "./icons";
 
 export type MoreItem =
-  | { kind: "action"; icon: IconName; label: string; shortcut?: string; onSelect: () => void }
+  | { kind: "action"; icon: IconName; label: string; shortcut?: string; disabled?: boolean; onSelect: () => void }
   | { kind: "toggle"; icon: IconName; label: string; checked: boolean; onSelect: () => void }
   | { kind: "divider" };
 
-/** The top bar's overflow menu: less-frequent actions. */
-export function MoreMenu({ items }: { items: MoreItem[] }) {
+export function MoreMenu({ items, label }: { items: MoreItem[]; label?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -31,14 +30,14 @@ export function MoreMenu({ items }: { items: MoreItem[] }) {
   return (
     <div className="more" ref={ref}>
       <button
-        className={`icon-btn ${open ? "on" : ""}`}
+        className={label ? "link small" : `icon-btn ${open ? "on" : ""}`}
         onClick={() => setOpen(!open)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="More"
-        title="More"
+        aria-label={label ?? "More"}
+        title={label ?? "More"}
       >
-        <Icon name="more" />
+        {label ? <>{label}<Icon name="chevronDown" size={13} /></> : <Icon name="more" />}
       </button>
       {open && (
         <div className="menu dropdown" role="menu">
@@ -50,6 +49,7 @@ export function MoreMenu({ items }: { items: MoreItem[] }) {
                 key={item.label}
                 role={item.kind === "toggle" ? "menuitemcheckbox" : "menuitem"}
                 aria-checked={item.kind === "toggle" ? item.checked : undefined}
+                disabled={item.kind === "action" && item.disabled}
                 onClick={() => {
                   setOpen(false);
                   item.onSelect();

@@ -142,6 +142,7 @@ try {
   console.log("ok  declared and streamed import limits, cancellation, and page budget");
 
   const transitions = await page.evaluate(async () => {
+    await import("/src/pdfjs-global.ts");
     const { MarkupController } = await import("/src/markup.ts");
     const { saveNotes } = await import("/src/recent.ts");
     const root = document.body.appendChild(document.createElement("div"));
@@ -154,14 +155,18 @@ try {
     const bus = { on(name, fn) { events.set(name, fn); } };
     const markup = new MarkupController(bus, viewer, () => {});
     const editor = () => ({ id: "editor", pageIndex: 0, constructor: { _type: "highlight" },
-      isEmpty: () => false, serialize: () => ({ color: [0, 255, 0] }), comment: null });
+      isEmpty: () => false, serialize: () => ({ color: [0, 255, 0], quadPoints: [0, 1, 1, 1, 0, 0, 1, 0] }), comment: null });
     const manager = (layer, editors = []) => events.get("annotationeditoruimanager")({
-      source: viewer, uiManager: { getEditors: () => editors, getLayer: () => layer },
+      source: viewer, uiManager: { getMode: () => pdfjsLib.AnnotationEditorType.HIGHLIGHT, getEditors: () => editors, getLayer: () => layer },
     });
     await markup.load("first", false);
-    manager(null);
+    const firstEditors = [];
+    manager(null, firstEditors);
     document.getSelection().selectAllChildren(text);
     document.dispatchEvent(new Event("selectionchange"));
+    firstEditors.push(editor());
+    markup.sync();
+    const firstText = markup.state.marks[0].text;
     await markup.load("second", false);
     manager(null, [editor()]);
     markup.sync();
@@ -183,9 +188,9 @@ try {
     await new Promise(resolve => setTimeout(resolve, 0));
     markup.unload();
     root.remove();
-    return { highlightedText, staleAdds, currentAdds };
+    return { firstText, highlightedText, staleAdds, currentAdds };
   });
-  assert.deepEqual(transitions, { highlightedText: "", staleAdds: 0, currentAdds: 1 });
+  assert.deepEqual(transitions, { firstText: "private selection in the first PDF", highlightedText: "", staleAdds: 0, currentAdds: 1 });
   console.log("ok  document switches discard previous selections and in-flight annotation restores");
 
   await page.goto(origin + "/index.html");

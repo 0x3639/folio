@@ -70,6 +70,43 @@ try {
   assert.equal(await page.locator(".document-tabs").count(), 0);
   console.log("ok  the tab strip appears for a second tab and disappears when one remains");
 
+  const sidebarToggle = page.getByRole("button", { name: /Toggle sidebar/ });
+  const sidebarWasOpen = await sidebarToggle.getAttribute("aria-pressed") === "true";
+  if (!sidebarWasOpen) await sidebarToggle.click();
+  await page.getByRole("tab", { name: "Pages" }).click();
+  const bookmark = page.getByRole("button", { name: "Bookmark page 2", exact: true });
+  await bookmark.click();
+  assert.equal(await bookmark.getAttribute("aria-pressed"), "true");
+  assert.equal(await page.getByRole("textbox", { name: "Page number" }).inputValue(), "1");
+  await page.keyboard.press("ControlOrMeta+w");
+  await page.getByRole("button", { name: /Try a sample/ }).click();
+  await page.getByRole("button", { name: "Bookmark page 2", pressed: true }).waitFor();
+  await bookmark.press("Enter");
+  assert.equal(await bookmark.getAttribute("aria-pressed"), "false");
+  await bookmark.click();
+  const filter = page.getByRole("button", { name: "Bookmarked", exact: true });
+  const bookmark3 = page.getByRole("button", { name: "Bookmark page 3", exact: true });
+  const pageNumber = page.getByRole("textbox", { name: "Page number" });
+  await bookmark3.click();
+  await filter.press("Enter");
+  assert.equal(await filter.getAttribute("aria-pressed"), "true");
+  assert.deepEqual(await page.locator(".thumbs .thumb").evaluateAll(rows => rows.map(row => row.dataset.page)), ["2", "3"]);
+  assert.equal(await pageNumber.inputValue(), "1");
+  await page.getByRole("button", { name: "Page 3", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('input[aria-label="Page number"]').value === "3");
+  await bookmark3.click();
+  assert.equal(await page.locator(".thumbs .thumb").count(), 1);
+  await bookmark.click();
+  await page.getByText("No bookmarked pages yet.", { exact: true }).waitFor();
+  assert.equal(await page.locator(".thumbs .thumb").count(), 0);
+  await filter.click();
+  assert.equal(await pageNumber.inputValue(), "3");
+  await page.getByRole("button", { name: "Page 1", exact: true }).click();
+  await bookmark.click();
+  if (!sidebarWasOpen) await sidebarToggle.click();
+  console.log("ok  a sidebar bookmark persists on its own and toggling it leaves the current page in place");
+  console.log("ok  Bookmarked filters the sidebar, jumps to the original page, and updates as bookmarks are removed");
+
   // A signature is an unsaved edit that must survive a tab switch.
   const photo = await page.evaluate(() => {
     const canvas = Object.assign(document.createElement("canvas"), { width: 600, height: 200 });
@@ -216,6 +253,44 @@ try {
   await textLayer.waitFor({ state: "detached" });
   console.log("ok  Highlight mode marks consecutive selections on release in the chosen color");
 
+  await page.getByTitle("Draw (D)").click();
+  const drawingTool = page.getByLabel("Drawing tool");
+  const inkPage = page.locator('.page[data-page-number="1"]');
+  await inkPage.locator(".annotationEditorLayer.inkEditing").waitFor();
+  await page.getByRole("radio", { name: "Blue" }).click();
+  for (const [index, shape] of ["Rectangle", "Oval", "Arrow"].entries()) {
+    if (index === 1) await page.getByTitle("Rotate (R)").click();
+    await drawingTool.selectOption(shape);
+    // Existing highlights have their own pointer targets. Start each new shape on the drawing layer.
+    const { x, y } = await inkPage.evaluate((el, index) => {
+      const box = el.querySelector(".canvasWrapper").getBoundingClientRect();
+      const layer = el.querySelector(".annotationEditorLayer.inkEditing");
+      const x = box.left + box.width * (0.18 + index * 0.25);
+      for (const fraction of [0.24, 0.32, 0.40, 0.48]) {
+        const y = box.top + box.height * fraction;
+        if (layer && document.elementFromPoint(x, y) === layer) return { x, y };
+      }
+      throw new Error("Could not find a blank starting point for the shape");
+    }, index);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 60, y + 36);
+    await inkPage.locator(".shape-preview path").waitFor({ state: "attached" });
+    await page.mouse.up();
+    const editor = inkPage.locator(".inkEditor").nth(index);
+    await editor.waitFor({ state: "visible" });
+    const placed = await editor.boundingBox();
+    assert.ok(Math.abs(placed.x + placed.width / 2 - (x + 30)) < 8 && Math.abs(placed.y + placed.height / 2 - (y + 18)) < 8,
+      `${shape} should appear where it was drawn`);
+  }
+  await page.getByTitle(/Undo \(/).click();
+  await page.waitForFunction(() => document.querySelectorAll(".inkEditor").length === 2);
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await inkPage.locator(".inkEditor").nth(2).waitFor({ state: "attached" });
+  for (let i = 0; i < 3; i++) await page.getByTitle("Rotate (R)").click();
+  console.log("ok  Draw creates the three shapes and supports undo and redo");
+
   // Select a sentence and highlight it in one click.
   await dragAcross(page.locator('.page[data-page-number="1"] .textLayer').getByText(/A short tour of Folio/));
   await page.mouse.up();
@@ -300,13 +375,62 @@ try {
   await page.keyboard.press("ControlOrMeta+s");
   assert.equal(await app.evaluate(() => globalThis.folioCopySaved), "completed");
   assert.equal(readFileSync(copy, "latin1").match(/\/Subtype\s*\/Highlight\b/g)?.length, 4);
+  const savedInk = await page.evaluate(async bytes => {
+    const task = pdfjsLib.getDocument({ data: Uint8Array.from(bytes) });
+    try {
+      const pdf = await task.promise;
+      const annotations = await (await pdf.getPage(1)).getAnnotations();
+      return annotations.filter(a => a.subtype === "Ink").map(a => ({ color: Array.from(a.color), paths: a.inkLists.length }));
+    } finally { await task.destroy(); }
+  }, Array.from(readFileSync(copy)));
+  assert.deepEqual(savedInk.map(a => a.paths).sort(), [1, 3, 4]);
+  assert.ok(savedInk.every(a => String(a.color) === "47,111,237"));
+  console.log("ok  all three shapes survive reopening and are embedded in the saved PDF");
   console.log("ok  saved copy includes marks on pages not drawn yet");
 
-  await page.getByRole("tab", { name: /Notes/ }).click();
+  if (await sidebarToggle.getAttribute("aria-pressed") !== "true") await sidebarToggle.click();
+  await page.getByRole("tab", { name: /^Notes/ }).click();
   for (const [quote, color] of [[passage, "#5edc9a"], ["The sidebar", "#ff8fc7"]]) {
     const card = page.locator(".mark-card").filter({ hasText: quote });
     assert.equal(await card.evaluate(el => el.style.getPropertyValue("--mark")), color);
   }
+  await page.getByLabel("Notes about this document").fill("Compare these passages.");
+  const jsonFile = path.join(env.FOLIO_TEST_USER_DATA, "reading-notes.json");
+  await app.evaluate(({ session }, file) => {
+    globalThis.folioNotesSaved = new Promise(resolve => session.defaultSession.once("will-download", (_, item) => {
+      item.setSavePath(file);
+      item.once("done", (_, state) => resolve([state, item.getFilename()]));
+    }));
+  }, jsonFile);
+  await page.getByRole("button", { name: "Export" }).click();
+  await page.getByRole("menuitem", { name: "Save JSON…" }).click();
+  const [state, filename] = await app.evaluate(() => globalThis.folioNotesSaved);
+  assert.equal(state, "completed");
+  assert.match(filename, /\.notes\.json$/);
+  const exported = JSON.parse(readFileSync(jsonFile, "utf8"));
+  assert.equal(exported.schemaVersion, 1);
+  assert.equal(exported.documentNote, "Compare these passages.");
+  assert.equal(exported.document.pageCount, lastPage);
+  assert.ok(exported.bookmarks.some(b => b.page >= 1));
+  assert.deepEqual(exported.bookmarkedPages, [2]);
+  assert.equal(new Set(exported.annotations.map(a => a.id)).size, exported.annotations.length);
+  assert.ok(exported.annotations.some(a => a.type === "highlight" && a.page === lastPage && a.quadPoints.length >= 8));
+  const shapes = exported.annotations.filter(a => a.type === "shape");
+  assert.deepEqual(shapes.map(a => a.shape).sort(), ["arrow", "oval", "rectangle"]);
+  assert.ok(shapes.every(a => a.page === 1 && a.color.toLowerCase() === "#2f6fed" && a.strokes[0].every(Number.isFinite)));
+  await page.evaluate(() => {
+    window.folioOriginalClipboard = Object.getOwnPropertyDescriptor(navigator.clipboard, "writeText");
+    Object.defineProperty(navigator.clipboard, "writeText", { configurable: true, value: async text => { window.folioMarkdown = text; } });
+  });
+  await page.getByRole("button", { name: "Export" }).click();
+  await page.getByRole("menuitem", { name: "Copy Markdown" }).click();
+  assert.match(await page.evaluate(() => window.folioMarkdown), /Compare these passages\./);
+  assert.match(await page.evaluate(() => window.folioMarkdown), /## Bookmarked pages\n\n- p\. 2/);
+  await page.evaluate(() => {
+    if (window.folioOriginalClipboard) Object.defineProperty(navigator.clipboard, "writeText", window.folioOriginalClipboard);
+    else delete navigator.clipboard.writeText;
+  });
+  console.log("ok  Notes exports Markdown and JSON with drawings, offscreen highlights and outline destinations");
   await page.getByRole("tab", { name: /Pages/ }).click();
 
   await page.getByRole("button", { name: "More" }).click();

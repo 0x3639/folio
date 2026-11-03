@@ -368,6 +368,21 @@ kbd {
   background: var(--active);
   color: var(--text);
 }
+.bookmark-filter {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 10px 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.bookmark-filter:hover { background: var(--hover); }
+.bookmark-filter[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); }
+.bookmark-filter[aria-pressed="true"] svg { fill: currentColor; }
 
 .sidebar-scroll {
   flex: 1;
@@ -391,6 +406,21 @@ kbd {
   padding: 8px 10px;
   border-radius: 10px;
 }
+.thumb-row { display: flex; flex: none; flex-direction: column; align-items: center; }
+.thumb-row > .thumb:only-child { height: 100%; }
+.thumb-caption { display: flex; align-items: center; gap: 2px; }
+.thumb-caption .thumb-num { cursor: pointer; }
+.thumb-bookmark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--text-2);
+}
+.thumb-bookmark:hover { background: var(--hover); }
+.thumb-bookmark[aria-pressed="true"] { color: var(--accent-text); }
+.thumb-bookmark[aria-pressed="true"] svg { fill: currentColor; }
 .thumb-frame {
   position: relative;
   border-radius: 3px;
@@ -420,7 +450,7 @@ kbd {
   padding: 1px 7px;
   border-radius: 6px;
 }
-.thumb.on .thumb-num {
+.thumb.on .thumb-num, .thumb.on + .thumb-caption .thumb-num {
   color: #fff;
   background: var(--accent);
 }
@@ -737,6 +767,10 @@ kbd {
 .color-pill {
   left: 50%;
   top: 16px;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  flex-wrap: wrap;
+  justify-content: center;
   transform: translateX(-50%);
   padding: 5px 5px 5px 9px;
   border-radius: 14px;
@@ -749,7 +783,25 @@ kbd {
     transform: translate(-50%, -6px);
   }
 }
-.color-pill > button[role="radio"] {
+.draw-tool {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px;
+  color: var(--text);
+  background: var(--surface-2);
+  font: inherit;
+  font-size: 13px;
+}
+.shape-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+.color-options { display: flex; align-items: center; gap: 6px; }
+.color-options > button[role="radio"] {
   width: 22px;
   height: 22px;
   border-radius: 50%;
@@ -757,10 +809,10 @@ kbd {
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
   transition: transform 0.15s var(--ease), box-shadow 0.15s;
 }
-.color-pill > button[role="radio"]:hover {
+.color-options > button[role="radio"]:hover {
   transform: scale(1.12);
 }
-.color-pill > button[role="radio"].on {
+.color-options > button[role="radio"].on {
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 2px var(--surface), 0 0 0 4px var(--swatch);
 }
 .pill-done {
