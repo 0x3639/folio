@@ -259,25 +259,41 @@ try {
   await inkPage.locator(".annotationEditorLayer.inkEditing").waitFor();
   await page.getByRole("radio", { name: "Blue" }).click();
   for (const [index, shape] of ["Rectangle", "Oval", "Arrow"].entries()) {
-    if (index === 1) await page.getByTitle("Rotate (R)").click();
+    if (index === 1) {
+      await page.getByTitle("Rotate (R)").click();
+      await inkPage.locator('.annotationEditorLayer.inkEditing[data-main-rotation="90"]').waitFor();
+    }
     await drawingTool.selectOption(shape);
-    // Existing highlights have their own pointer targets. Start each new shape on the drawing layer.
-    const { x, y } = await inkPage.evaluate((el, index) => {
+    // Zoom and rotation can leave only part of the page visible. Wait for a clear drag on the
+    // drawing layer, avoiding existing annotations and the floating reader controls.
+    const start = await page.waitForFunction(() => {
+      const el = document.querySelector('.page[data-page-number="1"]');
+      const layer = el?.querySelector(".annotationEditorLayer.inkEditing");
+      if (!layer) return null;
       const box = el.querySelector(".canvasWrapper").getBoundingClientRect();
-      const layer = el.querySelector(".annotationEditorLayer.inkEditing");
-      const x = box.left + box.width * (0.18 + index * 0.25);
-      for (const fraction of [0.24, 0.32, 0.40, 0.48]) {
-        const y = box.top + box.height * fraction;
-        if (layer && document.elementFromPoint(x, y) === layer) return { x, y };
+      const view = el.closest(".viewer-container").getBoundingClientRect();
+      const left = Math.ceil(Math.max(0, box.left, view.left)) + 8;
+      const top = Math.ceil(Math.max(0, box.top, view.top)) + 8;
+      const right = Math.min(innerWidth, box.right, view.right) - 68;
+      const bottom = Math.min(innerHeight, box.bottom, view.bottom) - 44;
+      for (let y = top; y <= bottom; y += 24) {
+        for (let x = left; x <= right; x += 32) {
+          if (document.elementFromPoint(x, y) === layer && document.elementFromPoint(x + 60, y + 36) === layer) return { x, y };
+        }
       }
-      throw new Error("Could not find a blank starting point for the shape");
-    }, index);
+      return null;
+    });
+    const { x, y } = await start.jsonValue();
+    await start.dispose();
+    // pdf.js orders editors by page position, so a new shape need not be the last DOM node.
+    const excludeExisting = await inkPage.locator(".inkEditor").evaluateAll(editors =>
+      editors.map(editor => `:not(#${CSS.escape(editor.id)})`).join(""));
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x + 60, y + 36);
     await inkPage.locator(".shape-preview path").waitFor({ state: "attached" });
     await page.mouse.up();
-    const editor = inkPage.locator(".inkEditor").nth(index);
+    const editor = inkPage.locator(`.inkEditor${excludeExisting}`);
     await editor.waitFor({ state: "visible" });
     const placed = await editor.boundingBox();
     assert.ok(Math.abs(placed.x + placed.width / 2 - (x + 30)) < 8 && Math.abs(placed.y + placed.height / 2 - (y + 18)) < 8,
