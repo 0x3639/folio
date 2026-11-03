@@ -25,6 +25,7 @@ export type SidebarTab = "pages" | "outline" | "notes";
 export function Sidebar({ pdf, page, rotation, onSelectPage, onSelectDest, order, onOrder, onSaveOrder, onOpenCopy,
   tab, onTab: setTab, notes, noteCount, bookmarkedPages, onToggleBookmark }: Props) {
   const [outline, setOutline] = useState<OutlineItem[] | null>(null);
+  const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
 
   useEffect(() => {
     setOutline(null);
@@ -48,12 +49,18 @@ export function Sidebar({ pdf, page, rotation, onSelectPage, onSelectDest, order
           Notes{noteCount > 0 && <span className="tab-count">{noteCount}</span>}
         </button>
       </div>
+      {tab === "pages" && (
+        <button type="button" className="bookmark-filter" aria-pressed={bookmarkedOnly} disabled={bookmarkedPages === null}
+          title={bookmarkedOnly ? "Show all pages" : "Show bookmarked pages"} onClick={() => setBookmarkedOnly(only => !only)}>
+          <Icon name="bookmark" size={13} /> Bookmarked
+        </button>
+      )}
       <div className="sidebar-scroll">
         {tab === "notes" ? (
           notes
         ) : tab === "pages" ? (
           <Thumbnails pdf={pdf} page={page} rotation={rotation} onSelect={onSelectPage}
-            bookmarkedPages={bookmarkedPages} onToggleBookmark={onToggleBookmark} />
+            bookmarkedPages={bookmarkedPages} onToggleBookmark={onToggleBookmark} bookmarkedOnly={bookmarkedOnly} />
         ) : outline === null ? null : outline.length === 0 ? (
           <div className="empty-outline">
             <Icon name="list" size={22} />
@@ -174,11 +181,12 @@ function PageOrganizer({ pdf, page, rotation, onSelect, order, onOrder, onSave, 
   );
 }
 
-function Thumbnails({ pdf, page, rotation, onSelect, order, onMove, bookmarkedPages, onToggleBookmark }: ThumbnailProps & {
+function Thumbnails({ pdf, page, rotation, onSelect, order, onMove, bookmarkedPages, onToggleBookmark, bookmarkedOnly = false }: ThumbnailProps & {
   order?: number[];
   onMove?: (source: number, to: number) => void;
   bookmarkedPages?: Props["bookmarkedPages"];
   onToggleBookmark?: Props["onToggleBookmark"];
+  bookmarkedOnly?: boolean;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const dragType = `application/x-folio-page-${pdf.loadingTask.docId.toLowerCase()}`;
@@ -186,7 +194,9 @@ function Thumbnails({ pdf, page, rotation, onSelect, order, onMove, bookmarkedPa
   const [ratio, setRatio] = useState(1.294);
   const [range, setRange] = useState({ start: 0, end: 12 });
   const rowHeight = Math.ceil(THUMB_W * ratio) + 48;
-  const activeIndex = order ? order.indexOf(page) : page - 1;
+  const pages = order ?? (bookmarkedOnly ? bookmarkedPages ?? [] : undefined);
+  const count = pages?.length ?? pdf.numPages;
+  const activeIndex = pages ? Math.max(0, pages.indexOf(page)) : page - 1;
   const thumbPage = (target: EventTarget) => Number((target as Element).closest<HTMLElement>(".thumb")?.dataset.page);
 
   useEffect(() => {
@@ -203,8 +213,8 @@ function Thumbnails({ pdf, page, rotation, onSelect, order, onMove, bookmarkedPa
     let frame = 0;
     const measure = () => {
       frame = 0;
-      const start = Math.min(pdf.numPages - 1, Math.max(0, Math.floor(scroll.scrollTop / rowHeight) - 4));
-      const end = Math.min(pdf.numPages, Math.ceil((scroll.scrollTop + scroll.clientHeight) / rowHeight) + 4);
+      const start = Math.max(0, Math.min(count - 1, Math.floor(scroll.scrollTop / rowHeight) - 4));
+      const end = Math.min(count, Math.ceil((scroll.scrollTop + scroll.clientHeight) / rowHeight) + 4);
       setRange(previous => previous.start === start && previous.end === end ? previous : { start, end });
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
@@ -217,7 +227,7 @@ function Thumbnails({ pdf, page, rotation, onSelect, order, onMove, bookmarkedPa
       observer.disconnect();
       scroll.removeEventListener("scroll", schedule);
     };
-  }, [pdf, rowHeight]);
+  }, [count, rowHeight]);
 
   // Keep the active thumbnail in view as the reader scrolls.
   useEffect(() => {
@@ -227,7 +237,7 @@ function Thumbnails({ pdf, page, rotation, onSelect, order, onMove, bookmarkedPa
       scroll.scrollTop = Math.max(0, top - (scroll.clientHeight - rowHeight) / 2);
       scroll.dispatchEvent(new Event("scroll"));
     }
-  }, [pdf, activeIndex, rowHeight]);
+  }, [pdf, activeIndex, rowHeight, bookmarkedOnly]);
 
   return (
     <div className="thumbs" ref={listRef} style={{ gap: 0 }}
@@ -256,15 +266,19 @@ function Thumbnails({ pdf, page, rotation, onSelect, order, onMove, bookmarkedPa
         setDropTarget(null);
       }}
       onDragEnd={() => setDropTarget(null)}>
-      <div aria-hidden="true" style={{ height: range.start * rowHeight, flexShrink: 0 }} />
-      {Array.from({ length: Math.max(0, Math.min(range.end, pdf.numPages) - range.start) }, (_, i) => {
+      {count === 0 && <div className="empty-outline" role="status">
+        <Icon name="bookmark" size={22} />
+        <p>No bookmarked pages yet.</p>
+      </div>}
+      <div aria-hidden="true" style={{ height: Math.min(range.start, count) * rowHeight, flexShrink: 0 }} />
+      {Array.from({ length: Math.max(0, Math.min(range.end, count) - range.start) }, (_, i) => {
         const index = range.start + i;
-        const n = order?.[index] ?? index + 1;
+        const n = pages?.[index] ?? index + 1;
         return <Thumb key={`${n}-${rotation}`} pdf={pdf} n={n} ratio={ratio} rotation={rotation} active={page === n}
           bookmarked={bookmarkedPages?.includes(n)} onToggleBookmark={onToggleBookmark}
           position={order ? index + 1 : undefined} draggable={!!onMove} dropTarget={dropTarget === n} onSelect={onSelect} />;
       })}
-      <div aria-hidden="true" style={{ height: Math.max(0, pdf.numPages - range.end) * rowHeight, flexShrink: 0 }} />
+      <div aria-hidden="true" style={{ height: Math.max(0, count - range.end) * rowHeight, flexShrink: 0 }} />
     </div>
   );
 }

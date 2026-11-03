@@ -72,8 +72,28 @@ try {
   await bookmark.press("Enter");
   assert.equal(await bookmark.getAttribute("aria-pressed"), "false");
   await bookmark.click();
+  const filter = page.getByRole("button", { name: "Bookmarked", exact: true });
+  const bookmark3 = page.getByRole("button", { name: "Bookmark page 3", exact: true });
+  const pageNumber = page.getByRole("textbox", { name: "Page number" });
+  await bookmark3.click();
+  await filter.press("Enter");
+  assert.equal(await filter.getAttribute("aria-pressed"), "true");
+  assert.deepEqual(await page.locator(".thumbs .thumb").evaluateAll(rows => rows.map(row => row.dataset.page)), ["2", "3"]);
+  assert.equal(await pageNumber.inputValue(), "1");
+  await page.getByRole("button", { name: "Page 3", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('input[aria-label="Page number"]').value === "3");
+  await bookmark3.click();
+  assert.equal(await page.locator(".thumbs .thumb").count(), 1);
+  await bookmark.click();
+  await page.getByText("No bookmarked pages yet.", { exact: true }).waitFor();
+  assert.equal(await page.locator(".thumbs .thumb").count(), 0);
+  await filter.click();
+  assert.equal(await pageNumber.inputValue(), "3");
+  await page.getByRole("button", { name: "Page 1", exact: true }).click();
+  await bookmark.click();
   if (!sidebarWasOpen) await sidebarToggle.click();
   console.log("ok  a sidebar bookmark persists on its own and toggling it leaves the current page in place");
+  console.log("ok  Bookmarked filters the sidebar, jumps to the original page, and updates as bookmarks are removed");
 
   // Opening another document (here from the file manager) asks first when there's unsaved work, a placed signature,
   // and keeps it if the reader says no.
