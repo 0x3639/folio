@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.13.0
+
+- Select or drop several PDFs to open them in one window. Each document keeps its page, zoom, and unsaved edits when you switch tabs.
+- The tab strip appears when you open a second tab and disappears when only one remains. Choose **More → New tab** to open another document.
+
 ## 1.12.2
 
 - Folio starts recognizing scanned text in the background when you open a PDF. Jumping to a page gives it priority.
