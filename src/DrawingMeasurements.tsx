@@ -1,3 +1,4 @@
+import { markVisible } from './reviewModel';
 import { drawingEndpoints, snapPoint } from "./drawingSnap";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -86,7 +87,7 @@ export function Measurements({ viewer, bus, active, page, data = emptyDrawing(),
         host.className = "measurement-host";
         hosts.current.set(index, host);
       }
-      const marks = data.measurements.filter(mark => mark.page === index);
+      const marks = data.measurements.filter(mark => mark.page === index && markVisible(data, mark.id));
       const pending = draft?.page === index ? draft.points : [];
       const screen = (points: Point[]) => points.map(([x, y]) => viewport.convertToViewportPoint(x, y));
       return createPortal(<svg className={`measurement-overlay ${active ? 'measuring' : ''}`}
@@ -100,7 +101,7 @@ export function Measurements({ viewer, bus, active, page, data = emptyDrawing(),
           const box = event.currentTarget.getBoundingClientRect();
           const raw = viewport.convertToPdfPoint((event.clientX - box.left) / box.width * viewport.width, (event.clientY - box.top) / box.height * viewport.height) as Point;
           const previous = draft?.page === index ? draft.points : [];
-          const { point } = snapPoint(raw, snap ? [...(endpoints.current.get(index) ?? []), ...data.measurements.filter(m => m.page === index).flatMap(m => m.points)] : [], 8 / viewport.scale, previous.at(-1), event.shiftKey);
+          const { point } = snapPoint(raw, snap ? [...(endpoints.current.get(index) ?? []), ...data.measurements.filter(m => m.page === index && markVisible(data, m.id)).flatMap(m => m.points)] : [], 8 / viewport.scale, previous.at(-1), event.shiftKey);
           if (previous.length && distance(previous.at(-1)!, point) < 0.01) return;
           const next = { page: index, points: [...previous, point] };
           setDraft(next); setMessage("");

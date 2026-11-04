@@ -1,6 +1,7 @@
 import { Measurements } from "./DrawingMeasurements";
 import { emptyDrawing } from "./measurements";
 import { ReviewWorkspace } from "./ReviewWorkspace";
+import { CarryReviewDialog } from './CarryReviewDialog';
 import { RevisionCompare } from "./RevisionCompare";
 import { reviewRows, reviewCsv } from "./reviewModel";
 import { measurementLabel } from "./measurements";
@@ -178,6 +179,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
   });
   const [reviewing, setReviewing] = useState(false);
   const [comparing, setComparing] = useState(false);
+  const [carrying, setCarrying] = useState(false);
   const [measuring, setMeasuring] = useState(false);
   const [tool, setTool] = useState<Tool>("select");
   const [drawTool, setDrawTool] = useState<"Pen" | Shape>("Pen");
@@ -442,7 +444,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
         setPageInput(String(lastPageRef.current));
         setRotation(revision ? saved?.rotation ?? 0 : 0);
         setDirty(false);
-        setMeasuring(false); setReviewing(false); setComparing(false);
+        setMeasuring(false); setReviewing(false); setComparing(false); setCarrying(false);
         setTool("select");
         setPending(null);
         setSearchOpen(false);
@@ -1349,7 +1351,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
             active={measuring && !contentEditing} page={page} data={markup.drawing}
             onChange={drawing => { markupRef.current!.setDrawing(drawing); if (!persistRef.current) setDirty(true); }} onClose={() => setMeasuring(false)} />}
           {doc && viewerRef.current && busRef.current && markupRef.current && <ReviewWorkspace key={doc.id} viewer={viewerRef.current} bus={busRef.current} state={markup} controller={markupRef.current}
-            active={reviewing && !contentEditing} onClose={() => setReviewing(false)} onCompare={() => setComparing(true)}
+            active={reviewing && !contentEditing} onClose={() => setReviewing(false)} onCompare={() => setComparing(true)} onCarry={() => setCarrying(true)}
             onExport={async format => {
               const rows = reviewRows(markupRef.current!.state.drawing ?? emptyDrawing(), [...markupRef.current!.state.marks, ...(markupRef.current!.state.pdfMarks ?? [])], measurementLabel);
               try { if (format === 'csv') saveBlob(new Blob([reviewCsv(rows)], { type: 'text/csv;charset=utf-8' }), doc.name.replace(/\.pdf$/i, '') + '-review.csv');
@@ -1360,6 +1362,9 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
               try { const copy = await currentBytes(doc, pageOrder, true); if (copy) saveBlob(pdfBlob(copy.bytes), doc.name.replace(/\.pdf$/i, '') + '-review-final.pdf'); }
               catch (e) { flash(e instanceof Error ? e.message : 'Could not flatten this PDF.'); }
             }} />}
+          {carrying && doc && <CarryReviewDialog sourceName={doc.name} onClose={() => setCarrying(false)} snapshot={async () => {
+            const copy = await currentBytes(doc, []); if (!copy) throw new Error('The document is busy. Try again.'); return copy.bytes;
+          }} onOpen={(name, data) => { setCarrying(false); tabs.open([{ kind: 'bytes', name, data }]); }} />}
           {comparing && doc && <RevisionCompare initialPage={page} onClose={() => setComparing(false)} snapshot={async () => {
             const copy = await currentBytes(doc, []); if (!copy) throw new Error('The document is busy. Try again.'); return copy.bytes;
           }} />}

@@ -1,10 +1,12 @@
 import type { DrawingData, Measurement, Point } from './measurements';
 import type { StoredMark } from './recent';
 export type ReviewStatus = 'Open' | 'Answered' | 'Resolved';
+export interface ReviewLayer { id: string; name: string; visible: boolean }
 export interface ReviewMeta {
   author: string; discipline: string; status: ReviewStatus; subject: string;
   replies: { text: string; author: string; at: number }[];
-  locked?: boolean; group?: string;
+  locked?: boolean; group?: string; layer?: string;
+  carriedFrom?: { document: string; page: number; at: number };
 }
 export interface ReviewStyle {
   color: string; fill: string; width: number; opacity: number;
@@ -19,6 +21,7 @@ export const defaultStyle: ReviewStyle = { color: '#e5533d', fill: 'none', width
 export const defaultMeta = (): ReviewMeta => ({ author: '', discipline: '', status: 'Open', subject: '', replies: [] });
 export const reviewKinds: ReviewKind[] = ['Callout', 'Cloud callout', 'Text', 'Stamp', 'Line', 'Arrow', 'Rectangle', 'Oval', 'Cloud', 'Polygon'];
 export const metaFor = (data: DrawingData, id: string): ReviewMeta => ({ ...defaultMeta(), ...data.reviewMeta?.[id] });
+export const markVisible = (data: DrawingData, id: string) => data.layers?.find(layer => layer.id === data.reviewMeta?.[id]?.layer)?.visible !== false;
 export function bounds(points: Point[]) {
   return [Math.min(...points.map(p => p[0])), Math.min(...points.map(p => p[1])), Math.max(...points.map(p => p[0])), Math.max(...points.map(p => p[1]))] as [number, number, number, number];
 }
@@ -43,18 +46,18 @@ export function cloudPoints(a: Point, b: Point): Point[] {
   }
   return points;
 }
-export interface ReviewRow { id: string; page: number; kind: string; text: string; source: 'review' | 'measurement' | 'annotation' | 'pdf'; createdAt: number; meta: ReviewMeta }
+export interface ReviewRow { id: string; page: number; kind: string; text: string; source: 'review' | 'measurement' | 'annotation' | 'pdf'; createdAt: number; meta: ReviewMeta; layerName?: string }
 export function reviewRows(data: DrawingData, marks: StoredMark[], label: (m: Measurement) => string): ReviewRow[] {
   return [
     ...(data.review ?? []).map(m => ({ id: m.id, page: m.page, kind: m.kind, text: m.text, source: 'review' as const, createdAt: m.createdAt, meta: metaFor(data, m.id) })),
     ...data.measurements.map(m => ({ id: m.id, page: m.page, kind: m.kind, text: label(m), source: 'measurement' as const, createdAt: 0, meta: metaFor(data, m.id) })),
     ...marks.map(m => ({ id: m.id, page: m.page, kind: String(m.data.subtype ?? m.shape ?? m.type), text: m.note || m.text, source: m.data.external ? 'pdf' as const : 'annotation' as const, createdAt: m.createdAt, meta: metaFor(data, m.id) })),
-  ].sort((a, b) => a.page - b.page || a.createdAt - b.createdAt);
+  ].sort((a, b) => a.page - b.page || a.createdAt - b.createdAt).map(row => ({ ...row, layerName: data.layers?.find(l => l.id === row.meta.layer)?.name }));
 }
 export function reviewCsv(rows: ReviewRow[]): string {
   // A CSV opened in a spreadsheet must treat comments as text, not formulas.
   const cell = (value: unknown) => '"' + String(value ?? '').replace(/^[=+@\-\t\r]/, s => "'" + s).replaceAll('"', '""') + '"';
-  return [['Sheet', 'Type', 'Subject', 'Comment', 'Author', 'Discipline', 'Status', 'Replies'], ...rows.map(r => [r.page + 1, r.kind, r.meta.subject, r.text, r.meta.author, r.meta.discipline, r.meta.status, r.meta.replies.map(p => `${p.author}: ${p.text}`).join('\n')])].map(row => row.map(cell).join(',')).join('\r\n');
+  return [['Sheet', 'Type', 'Subject', 'Comment', 'Author', 'Discipline', 'Status', 'Layer', 'Carried from', 'Replies'], ...rows.map(r => [r.page + 1, r.kind, r.meta.subject, r.text, r.meta.author, r.meta.discipline, r.meta.status, r.layerName ?? '', r.meta.carriedFrom ? `${r.meta.carriedFrom.document}, sheet ${r.meta.carriedFrom.page + 1}` : '', r.meta.replies.map(p => `${p.author}: ${p.text}`).join('\n')])].map(row => row.map(cell).join(',')).join('\r\n');
 }
 export function validateReviewMark(value: unknown, pages: number): value is ReviewMark {
   const m = value as ReviewMark;

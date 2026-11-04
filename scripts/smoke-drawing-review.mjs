@@ -43,6 +43,15 @@ export async function checkDrawingReview(app, page, output) {
   await panel.getByLabel('Filter status', { exact: true }).selectOption('Open');
   assert.equal(await panel.locator('.review-list li').count(), 0);
   await panel.getByLabel('Filter status', { exact: true }).selectOption('All');
+  await panel.getByLabel('New layer', { exact: true }).fill('Structural review');
+  await panel.getByRole('button', { name: 'Add layer', exact: true }).click();
+  await panel.getByLabel('Selected layer', { exact: true }).selectOption({ label: 'Structural review' });
+  await panel.getByLabel('Show layer Structural review', { exact: true }).uncheck();
+  assert.equal(await overlay.locator('g[data-review-id]').count(), 0, 'hiding a layer removes its geometry and handles');
+  await panel.getByRole('button', { name: 'Undo', exact: true }).click();
+  assert.equal(await overlay.locator('g[data-review-id]').count(), 2, 'layer visibility is undoable');
+  await panel.getByRole('button', { name: 'Redo', exact: true }).click();
+  assert.equal(await overlay.locator('g[data-review-id]').count(), 0);
   await page.screenshot({ path: path.join(output, 'drawing-review.png') });
   const download = async (name, action) => {
     const file = path.join(output, name);
@@ -63,10 +72,17 @@ export async function checkDrawingReview(app, page, output) {
   });
   const annotations = await page.evaluate(async bytes => {
     const task = pdfjsLib.getDocument({ data: Uint8Array.from(bytes) });
-    try { const pdf = await task.promise; return (await (await pdf.getPage(1)).getAnnotations()).map(a => ({ subtype: a.subtype, content: a.contentsObj?.str })); }
+    try { const pdf = await task.promise; return (await (await pdf.getPage(1)).getAnnotations({ intent: 'any' })).map(a => ({ subtype: a.subtype, content: a.contentsObj?.str })); }
     finally { await task.destroy(); }
   }, Array.from(saved));
   assert.equal(annotations.filter(a => a.subtype === 'FreeText' && a.content === 'Verify beam clearance').length, 2);
+  const pdfLayers = await page.evaluate(async bytes => {
+    const task = pdfjsLib.getDocument({ data: Uint8Array.from(bytes) });
+    try { const pdf = await task.promise, config = await pdf.getOptionalContentConfig(); return Array.from(config, ([, g]) => ({ name: g.name, visible: g.visible })); }
+    finally { await task.destroy(); }
+  }, Array.from(saved));
+  assert.deepEqual(pdfLayers, [{ name: 'Structural review', visible: false }]);
+  await panel.getByLabel('Show layer Structural review', { exact: true }).check();
   await panel.getByRole('button', { name: 'Compare revisions', exact: true }).click();
   const compare = page.getByRole('dialog', { name: 'Compare revisions', exact: true });
   await compare.getByLabel('Revised PDF', { exact: true }).setInputFiles({ name: 'revision.pdf', mimeType: 'application/pdf', buffer: Buffer.from(saved) });
@@ -86,6 +102,10 @@ export async function checkDrawingReview(app, page, output) {
   await app.evaluate(({ BrowserWindow }, bytes) => BrowserWindow.getAllWindows()[0].webContents.send('folio:open-file', { name: 'review-editable.pdf', data: Buffer.from(bytes) }), Array.from(saved));
   await page.getByRole('button', { name: 'Review', exact: true }).click();
   await panel.getByRole('checkbox', { name: 'Select Callout on sheet 1', exact: true }).nth(1).waitFor();
+  await panel.getByLabel('Show layer Structural review', { exact: true }).waitFor();
+  assert.equal(await panel.getByLabel('Show layer Structural review', { exact: true }).isChecked(), false);
+  assert.equal(await page.locator('.review-overlay g[data-review-id]').count(), 0);
+  await panel.getByLabel('Show layer Structural review', { exact: true }).check();
   await panel.locator('.review-list button').first().click();
   await panel.getByText('Please check the revised detail.', { exact: true }).waitFor();
   await panel.getByLabel('Note or stamp text').fill('Checked after reopening');
@@ -102,6 +122,25 @@ export async function checkDrawingReview(app, page, output) {
   await page.mouse.click(cloudBox.x + 80, cy); await page.mouse.click(cloudBox.x + 160, cy + 50); await page.mouse.click(cloudBox.x + 200, cy - 60);
   assert.equal(await page.locator('.review-overlay g[data-review-id]').count(), 4, 'a cloud and callout form one editable mark');
   assert.ok(await page.locator('.review-overlay g[data-review-id]').last().locator('path').count() >= 3);
+  const revised = await PDFDocument.create();
+  const savedDoc = await PDFDocument.load(saved);
+  for (const p of savedDoc.getPages()) revised.addPage([p.getWidth(), p.getHeight()]);
+  await panel.getByRole('button', { name: 'Carry comments forward…', exact: true }).click();
+  const transfer = page.getByRole('dialog', { name: 'Carry comments forward', exact: true });
+  await transfer.getByLabel('Revised drawing', { exact: true }).setInputFiles({ name: 'drawing-revision.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await revised.save()) });
+  await transfer.getByLabel('Destination for sheet 1', { exact: true }).selectOption('0');
+  assert.equal(await transfer.getByRole('button', { name: 'Create reviewed copy', exact: true }).isDisabled(), true);
+  await transfer.getByLabel('I checked the sheet matches and drawing alignment', { exact: true }).check();
+  await transfer.getByRole('button', { name: 'Create reviewed copy', exact: true }).click();
+  await transfer.getByText('4 marks carried forward; 0 duplicates skipped. Open the copy to verify placement, then save it.', { exact: true }).waitFor();
+  await transfer.getByRole('button', { name: 'Open reviewed copy', exact: true }).click();
+  await page.getByRole('tab', { name: 'drawing-revision-reviewed.pdf', selected: true, exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await panel.locator('.review-list li').nth(3).waitFor();
+  await panel.locator('.review-list button').first().click();
+  await panel.getByText(/Carried from review-editable.pdf, sheet 1/).waitFor();
+  assert.equal(await page.locator('.review-overlay g[data-review-id]').count(), 4);
+  console.log('PASS standard PDF layers, undo/reopen visibility, explicit revision mapping and carried comments');
   const vector = await PDFDocument.create();
   vector.addPage([400, 400]).drawLine({ start: { x: 50, y: 100 }, end: { x: 150, y: 100 }, thickness: 1 });
   const vectorBytes = await vector.save();

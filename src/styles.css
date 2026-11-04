@@ -1693,3 +1693,7 @@ kbd {
 .review-panel input[type=range] { width: 100%; }
 .review-panel *, .compare-dialog * { box-sizing: border-box; }
 .review-panel { overflow-x: hidden; }
+
+.carry-dialog { max-width: 850px; margin: auto; height: auto; max-height: 100%; overflow: auto; gap: 14px; }
+.carry-sheet-list { overflow: auto; max-height: 45vh; display: grid; gap: 10px; }
+.carry-sheet-list label { display: flex; justify-content: space-between; align-items: center; gap: 15px; }

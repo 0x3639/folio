@@ -53,6 +53,19 @@ Or build Folio yourself from source (below).
 - **Exchange PDFs:** ordinary saved copies contain native PDF annotations with printable appearances.
   Callouts and measurements reopen as editable Folio records, including review fields and replies.
   **Save flattened copy** creates a final copy with fixed marks; the working document stays editable.
+- **Markup layers:** create named review layers, assign selected marks or measurements, and show or hide
+  each layer on the drawing. Visibility is undoable and survives reopening. Saved copies use standard PDF
+  optional-content groups and annotation visibility flags; flattened copies omit hidden review layers.
+  Saved copies preserve current visibility even in readers that ignore annotation layers. To show marks
+  that were hidden when exported, reopen them in Folio and show their layer before saving; other viewers
+  may not reveal them through a layer switch alone. Existing third-party marks can
+  retain their original layers, but cannot yet be assigned to a new Folio layer from the review panel.
+- **Carry comments forward:** select **Carry comments forward…**, choose a revised PDF, and explicitly
+  match sheets. Create and open a new reviewed copy with comments, replies, statuses, and source-sheet
+  provenance. Existing comments on revised sheets are preserved; repeated transfers skip matching IDs.
+  Check alignment in the comparison view first and recheck carried measurements. This first version
+  requires matching page size, crop, rotation, and units; it does not apply comparison alignment transforms.
+  Transfers involving external PDF layer rules are blocked rather than silently changing visibility.
 - **Compare revisions:** choose a revised PDF and matching sheet numbers. Pan and zoom together in
   side-by-side views, or overlay the original in red and the revision in blue. Use **Align two points**
   to match scale, rotation, and position before comparing changes.
@@ -64,8 +77,20 @@ Drawing review and measurement tools currently require unsigned, unencrypted PDF
 annotation support varies between readers: Folio preserves its own editing records, while other readers
 use standard annotation fields and appearances. Existing third-party annotations can be listed and
 reviewed; their original geometry/content is not rewritten by the review panel. Reply threads and
-custom fields are retained in Folio's saved annotation data. Flattening requires printable appearances
+custom fields are retained in Folio's saved annotation data. Standard text replies and review-state
+annotations are also written for readers that support them. Native text, endpoint, stroke, weight,
+opacity, and subject edits are read back where supported. Flattening requires printable appearances
 and reports a failure instead of silently dropping unsupported annotations.
+
+Compatibility checks run through PDF.js, an independent PDFium renderer, and macOS PDFKit. `npm run test:pdf-compatibility`
+checks all review/measurement types, printing-mode rendering, rotated/cropped pages, PDF font references,
+layer visibility, embedded Unicode text, and matching editable/flattened appearances without Folio annotation metadata.
+The macOS CI job also runs `scripts/test-pdfkit-compatibility.swift` against the generated fixtures. Fixtures
+are left in `release/smoke/standard-viewer-*.pdf` for manual testing. This does not certify every viewer:
+Acrobat, the Preview application, and Bluebeam still need direct application testing, and physical printing has not
+been tested. Viewers differ in their editing, layer controls, and custom review-field support. Use a
+flattened copy when a recipient only needs the visible marks. Appearance streams and optional-content
+groups follow the [PDF annotation specification](https://pdf-issues.pdfa.org/32000-2-2020/clause12.html).
 
 This is not full Bluebeam parity. Remaining areas include multiple scale regions, fractional
 architectural units, polylength, area cutouts, volume, automatic change detection, and shared live reviews.

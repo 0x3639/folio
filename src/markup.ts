@@ -1,3 +1,4 @@
+import { markVisible } from './reviewModel';
 import { emptyDrawing, type DrawingData } from "./measurements";
 // Highlights, drawings, text boxes and notes as first-class, auto-saved document data.
 // pdf.js owns the on-page editors; this keeps a saved copy per document and recreates the
@@ -137,6 +138,8 @@ export class MarkupController {
     if (generation !== this.#generation) return;
     this.#persist = persist;
     this.#drawing = saved?.drawing ?? importedDrawing ?? emptyDrawing();
+    if (importedDrawing?.layerGroups) this.#drawing = { ...this.#drawing, layerGroups: importedDrawing.layerGroups };
+    this.#applyReviewVisibility();
     this.#note = reading?.note ?? saved?.note ?? "";
     this.#bookmarkedPages = reading?.bookmarkedPages ?? saved?.bookmarkedPages ?? [];
     for (const mark of saved?.marks ?? []) {
@@ -201,7 +204,7 @@ export class MarkupController {
         editor.__folioShape = mark.shape;
         if (textBox) editor.isClone = true;
         layer.add(editor);
-        if (editor.div) editor.div.inert = !!this.#drawing.reviewMeta?.[mark.id]?.locked;
+        this.#applyEditorReview(editor);
         // An empty editor would be thrown away by pdf.js (and its mark with it) at the next tool change.
         if (editor.isEmpty()) {
           editor.remove();
@@ -504,11 +507,31 @@ export class MarkupController {
     }
   }
 
+  #applyEditorReview(editor: Editor) {
+    if (!editor.div) return;
+    const id = editor.__folioMark ?? '';
+    editor.div.inert = !!this.#drawing.reviewMeta?.[id]?.locked || !markVisible(this.#drawing, id);
+    editor.div.style.visibility = markVisible(this.#drawing, id) ? '' : 'hidden';
+  }
+
+  #applyReviewVisibility() {
+    for (const editor of this.#liveEditors()) this.#applyEditorReview(editor);
+    const generation = this.#generation;
+    void this.#viewer.optionalContentConfigPromise.then(config => {
+      if (!config || generation !== this.#generation) return;
+      let changed = false;
+      for (const layer of this.#drawing.layers ?? []) for (const id of this.#drawing.layerGroups?.[layer.id] ?? []) {
+        if (config.getGroup(id)?.visible !== layer.visible) { config.setVisibility(id, layer.visible); changed = true; }
+      }
+      if (changed) this.#viewer.optionalContentConfigPromise = Promise.resolve(config);
+    }).catch(() => { /* A closing document may have already disposed its rendering state. */ });
+  }
+
   setDrawing(drawing: DrawingData) {
     this.#drawingPast = [...this.#drawingPast.slice(-99), this.#drawing];
     this.#drawingFuture = [];
     this.#drawing = drawing;
-    for (const editor of this.#liveEditors()) if (editor.div) editor.div.inert = !!drawing.reviewMeta?.[editor.__folioMark ?? '']?.locked;
+    this.#applyReviewVisibility();
     this.#ui?.unselectAll();
     this.#emit();
     this.#scheduleSave();
@@ -519,7 +542,7 @@ export class MarkupController {
     const next = from.pop(); if (!next) return;
     (redo ? this.#drawingPast : this.#drawingFuture).push(this.#drawing);
     this.#drawing = next;
-    for (const editor of this.#liveEditors()) if (editor.div) editor.div.inert = !!next.reviewMeta?.[editor.__folioMark ?? '']?.locked;
+    this.#applyReviewVisibility();
     this.#emit(); this.#scheduleSave();
   }
 

@@ -3,12 +3,12 @@ import { createPortal } from 'react-dom';
 import type { EventBus, PDFViewer } from './viewer';
 import type { MarkupController, MarkupState } from './markup';
 import { emptyDrawing, measurementLabel, isSimpleOutline, type Point } from './measurements';
-import { bounds, defaultStyle, metaFor, movePoints, readToolPresets, reviewGeometry, reviewKinds, reviewRows, starterTools, type ReviewKind, type ReviewMark, type ReviewMeta, type ReviewStyle } from './reviewModel';
+import { bounds, defaultStyle, markVisible, metaFor, movePoints, readToolPresets, reviewGeometry, reviewKinds, reviewRows, starterTools, type ReviewKind, type ReviewMark, type ReviewMeta, type ReviewStyle } from './reviewModel';
 import { usePageOverlays } from './pageOverlays';
 import { drawingEndpoints, snapPoint } from './drawingSnap';
 import { keys } from './platform';
-interface Props { viewer: PDFViewer; bus: EventBus; state: MarkupState; controller: MarkupController; active: boolean; onClose: () => void; onExport: (format: 'csv' | 'pdf') => void; onCompare: () => void; onFlatten: () => void }
-export function ReviewWorkspace({ viewer, bus, state, controller, active, onClose, onExport, onCompare, onFlatten }: Props) {
+interface Props { viewer: PDFViewer; bus: EventBus; state: MarkupState; controller: MarkupController; active: boolean; onClose: () => void; onExport: (format: 'csv' | 'pdf') => void; onCompare: () => void; onCarry: () => void; onFlatten: () => void }
+export function ReviewWorkspace({ viewer, bus, state, controller, active, onClose, onExport, onCompare, onCarry, onFlatten }: Props) {
   const data = state.drawing ?? emptyDrawing(), review = data.review ?? [], rows = reviewRows(data, [...state.marks, ...(state.pdfMarks ?? [])], measurementLabel);
   const overlays = usePageOverlays(viewer, bus);
   const [tool, setTool] = useState<ReviewKind | 'Select'>('Select');
@@ -16,6 +16,7 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
   const [note, setNote] = useState('');
   const [author, setAuthor] = useState(() => { try { return localStorage.getItem('folio:review-author') || ''; } catch { return ''; } });
   const [discipline, setDiscipline] = useState('');
+  const [layerName, setLayerName] = useState(''), [activeLayer, setActiveLayer] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [draft, setDraft] = useState<{ page: number; points: Point[] } | null>(null);
   const [filter, setFilter] = useState(''), [status, setStatus] = useState('All'), [disciplineFilter, setDisciplineFilter] = useState('All');
@@ -94,7 +95,7 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
     if (tool === 'Callout' && points.length === 2) points.splice(1, 0, [points[1][0] - 15, points[1][1] - 8]);
     const id = crypto.randomUUID();
     const mark: ReviewMark = { id, page: pending.page, kind: tool, points, text: note, style: { ...style }, createdAt: Date.now() };
-    change({ ...data, review: [...review, mark], reviewMeta: { ...data.reviewMeta, [id]: { ...metaFor(data, id), author, discipline } } });
+    change({ ...data, review: [...review, mark], reviewMeta: { ...data.reviewMeta, [id]: { ...metaFor(data, id), author, discipline, layer: activeLayer || undefined } } });
     setDraft(null); setSelected([id]); setMessage(`${tool} added.`);
   };
   useEffect(() => {
@@ -115,7 +116,7 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
       const pointer = (e: React.PointerEvent<SVGSVGElement>): Point => {
         const box = e.currentTarget.getBoundingClientRect();
         const raw = viewport.convertToPdfPoint((e.clientX - box.left) / box.width * viewport.width, (e.clientY - box.top) / box.height * viewport.height) as Point;
-        const candidates = snap ? [...(endpoints.current.get(index) ?? []), ...review.filter(m => m.page === index && !selected.includes(m.id)).flatMap(m => m.points), ...data.measurements.filter(m => m.page === index && !selected.includes(m.id)).flatMap(m => m.points)] : [];
+        const candidates = snap ? [...(endpoints.current.get(index) ?? []), ...review.filter(m => m.page === index && markVisible(data, m.id) && !selected.includes(m.id)).flatMap(m => m.points), ...data.measurements.filter(m => m.page === index && markVisible(data, m.id) && !selected.includes(m.id)).flatMap(m => m.points)] : [];
         return snapPoint(raw, candidates, 8 / viewport.scale, draft?.points.at(-1), e.shiftKey).point;
       };
       const paintMark = (mark: ReviewMark, pending = false) => {
@@ -169,22 +170,33 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
           }
           gesture.current = null; setPreview(null); if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
         }} onPointerCancel={() => { gesture.current = null; setPreview(null); }} onLostPointerCapture={() => { gesture.current = null; setPreview(null); }}>
-        {(currentData.review ?? []).filter(m => m.page === index).map(m => paintMark(m))}
-        {active && currentData.measurements.filter(m => m.page === index).map(m => <g key={m.id} data-review-id={m.id}><polyline points={m.points.map(screen).map(p => p.join(',')).join(' ')} fill="none" stroke="transparent" strokeWidth={14} /><text x={screen(m.points[0])[0]} y={screen(m.points[0])[1]} fill="transparent" fontSize={14}>{measurementLabel(m)}</text></g>)}
-        {active && selected.length === 1 && !locked && (currentData.review?.find(m => m.id === selected[0]) ?? currentData.measurements.find(m => m.id === selected[0]))?.points.map((p, i) => { const [cx, cy] = screen(p); return <circle key={i} data-review-id={selected[0]} data-vertex={i} cx={cx} cy={cy} r={5} className="review-vertex" />; })}
+        {(currentData.review ?? []).filter(m => m.page === index && markVisible(currentData, m.id)).map(m => paintMark(m))}
+        {active && currentData.measurements.filter(m => m.page === index && markVisible(currentData, m.id)).map(m => <g key={m.id} data-review-id={m.id}><polyline points={m.points.map(screen).map(p => p.join(',')).join(' ')} fill="none" stroke="transparent" strokeWidth={14} /><text x={screen(m.points[0])[0]} y={screen(m.points[0])[1]} fill="transparent" fontSize={14}>{measurementLabel(m)}</text></g>)}
+        {active && selected.length === 1 && !locked && markVisible(currentData, selected[0]) && (currentData.review?.find(m => m.id === selected[0]) ?? currentData.measurements.find(m => m.id === selected[0]))?.points.map((p, i) => { const [cx, cy] = screen(p); return <circle key={i} data-review-id={selected[0]} data-vertex={i} cx={cx} cy={cy} r={5} className="review-vertex" />; })}
         {active && draft?.page === index && draft.points.length >= 2 && tool !== 'Select' && paintMark({ id: 'draft', page: index, points: draft.points, kind: tool, text: note, style, createdAt: 0 }, true)}
         {active && draft?.page === index && draft.points.map((p, i) => { const [cx, cy] = screen(p); return <circle key={i} cx={cx} cy={cy} r={4} fill={style.color} />; })}
       </svg>, host, String(index));
     })}
     {active && <aside className="review-panel" aria-label="Drawing review">
       <header><strong>Drawing review</strong><button onClick={onClose}>Done</button></header>
-      <div className="review-actions"><button onClick={() => controller.undoDrawing()} title={keys('Undo review edit (Ctrl+Z)')}>Undo</button><button onClick={() => controller.undoDrawing(true)}>Redo</button><button onClick={onCompare}>Compare revisions</button></div>
+      <div className="review-actions"><button onClick={() => controller.undoDrawing()} title={keys('Undo review edit (Ctrl+Z)')}>Undo</button><button onClick={() => controller.undoDrawing(true)}>Redo</button><button onClick={onCompare}>Compare revisions</button><button onClick={onCarry}>Carry comments forward…</button></div>
       <label>Review tool <select aria-label="Review tool" value={tool} onChange={e => { setTool(e.target.value as typeof tool); setArmedPreset(null); setSelected([]); setMessage(''); }}><option>Select</option>{reviewKinds.map(k => <option key={k}>{k}</option>)}</select></label>
       <p className="review-hint">{armedPreset?.points && tool !== 'Select' ? `Click once to place ${armedPreset.name}.` : tool === 'Select' ? 'Select a mark to edit. Shift-click for multiple marks. Drag handles to adjust points.' : tool === 'Cloud callout' ? 'Click opposite cloud corners, then the note location. The cloud and note move together.' : tool === 'Callout' ? 'Click the arrow tip, then the note location.' : tool === 'Polygon' ? 'Click corners, then Finish. Hold Shift for 45° angles.' : 'Click two opposite corners or endpoints. Hold Shift for 45° angles.'}</p>
       {tool !== 'Select' && <div className="review-actions"><button disabled={!draft} onClick={() => setDraft(draft && draft.points.length > 1 ? { ...draft, points: draft.points.slice(0, -1) } : null)}>Undo point</button><button disabled={!draft} onClick={() => setDraft(null)}>Cancel drawing</button>{tool === 'Polygon' && <button onClick={() => finish()}>Finish</button>}</div>}
       <label>Note or stamp text <textarea aria-label="Note or stamp text" value={note} maxLength={10000} onChange={e => { setNote(e.target.value); if (first && !locked) change({ ...data, review: review.map(m => m.id === first.id ? { ...m, text: e.target.value } : m) }); }} /></label>
       <div className="review-fields"><label>Author <input aria-label="Author" value={author} onChange={e => { setAuthor(e.target.value); try { localStorage.setItem('folio:review-author', e.target.value); } catch { /* Optional preference. */ } }} /></label><label>Discipline <input aria-label="Discipline" value={discipline} onChange={e => setDiscipline(e.target.value)} placeholder="Architectural" /></label></div>
       <label><input type="checkbox" checked={snap} onChange={e => setSnap(e.target.checked)} /> Snap to vector endpoints</label>
+      <details open><summary>Markup layers</summary>
+        <div className="review-fields"><label>New layer <input aria-label="New layer" maxLength={80} value={layerName} onChange={e => setLayerName(e.target.value)} /></label><button disabled={!layerName.trim() || (data.layers?.length ?? 0) >= 100} onClick={() => {
+          const id = crypto.randomUUID(); change({ ...data, layers: [...(data.layers ?? []), { id, name: layerName.trim(), visible: true }] }); setActiveLayer(id); setLayerName('');
+        }}>Add layer</button></div>
+        <label>Layer for new marks <select aria-label="Layer for new marks" value={activeLayer} onChange={e => setActiveLayer(e.target.value)}><option value="">Unassigned</option>{(data.layers ?? []).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+        {(data.layers ?? []).map(layer => <div className="review-fields" key={layer.id}>
+          <label><input type="checkbox" aria-label={`Show layer ${layer.name}`} checked={layer.visible} onChange={e => { change({ ...data, layers: data.layers?.map(l => l.id === layer.id ? { ...l, visible: e.target.checked } : l) }); setSelected([]); }} /> Show</label>
+          <input aria-label={`Layer name ${layer.name}`} maxLength={80} value={layer.name} onChange={e => { if (e.target.value.trim()) change({ ...data, layers: data.layers?.map(l => l.id === layer.id ? { ...l, name: e.target.value } : l) }); }} />
+        </div>)}
+        <p className="review-hint">Hidden layers stay editable in Folio and are omitted from flattened copies. Show a layer here before sharing its visible marks. Assign measurements using the markup list.</p>
+      </details>
       <details open><summary>Properties</summary><fieldset disabled={locked || external}>
         <div className="review-fields"><label>Stroke <input aria-label="Stroke" type="color" value={style.color} onChange={e => applyStyle({ color: e.target.value })} /></label><label>Fill <input aria-label="Fill" type="color" value={style.fill === 'none' ? '#ffffff' : style.fill} onChange={e => applyStyle({ fill: e.target.value })} /></label><button onClick={() => applyStyle({ fill: 'none' })}>No fill</button></div>
         <div className="review-fields"><label>Line weight <input aria-label="Line weight" type="number" min="0.1" max="20" step="0.5" value={style.width} onChange={e => { const width = Number(e.target.value); if (width >= .1 && width <= 20) applyStyle({ width }); }} /></label><label>Line style <select aria-label="Line style" value={style.dash} onChange={e => applyStyle({ dash: e.target.value as ReviewStyle['dash'] })}>{['solid', 'dashed', 'dotted'].map(v => <option key={v}>{v}</option>)}</select></label><label>Opacity <input aria-label="Opacity" type="range" min="0.05" max="1" step="0.05" value={style.opacity} onChange={e => applyStyle({ opacity: Number(e.target.value) })} /></label></div>
@@ -193,6 +205,8 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
       </fieldset></details>
       {chosen.length > 0 && <details open><summary>{chosen.length} selected</summary>{external && <p>Original PDF annotation: status, subject, replies, and reviewer fields can be tracked here. Use a new callout to propose a change to its content.</p>}
         <div className="review-actions"><button disabled={locked || external} onClick={duplicate}>Duplicate</button><button disabled={locked || external || selected.length < 2 || new Set(chosen.map(r => r.page)).size > 1} onClick={() => metadata({ group: crypto.randomUUID() })}>Group</button><button disabled={locked || external} onClick={() => metadata({ group: undefined })}>Ungroup</button><button onClick={() => metadata({ locked: !locked })}>{locked ? 'Unlock' : 'Lock'}</button><button disabled={locked || external} onClick={remove}>Delete</button></div>
+        <label>Selected layer <select aria-label="Selected layer" disabled={external || locked} value={chosen[0].meta.layer ?? ''} onChange={e => metadata({ layer: e.target.value || undefined })}><option value="">Unassigned</option>{(data.layers ?? []).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+        {chosen[0].meta.carriedFrom && <p>Carried from {chosen[0].meta.carriedFrom.document}, sheet {chosen[0].meta.carriedFrom.page + 1}. Check placement and any measurement scale against this revision.</p>}
         <label>Subject <input aria-label="Subject" value={chosen[0].meta.subject} onChange={e => metadata({ subject: e.target.value })} /></label>
         <label>Review status <select aria-label="Review status" value={chosen[0].meta.status} onChange={e => metadata({ status: e.target.value as ReviewMeta['status'] })}>{['Open', 'Answered', 'Resolved'].map(v => <option key={v}>{v}</option>)}</select></label>
         <button onClick={() => metadata({ author, discipline })}>Apply author and discipline</button>
@@ -216,7 +230,7 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
             const r = review.find(m => m.id === row.id), m = data.measurements.find(m => m.id === row.id);
             const rect = r ? reviewGeometry(r).rect : m ? bounds(m.points) : state.pdfMarks?.find(m => m.id === row.id)?.data.rect as number[] | undefined;
             viewer.scrollPageIntoView({ pageNumber: row.page + 1, destArray: rect ? [null, { name: 'XYZ' }, rect[0], rect[3] + 40, null] : undefined });
-          } }}><strong>Sheet {row.page + 1} · {row.kind} · {row.meta.status}</strong><span>{row.meta.subject || row.text || 'No comment'}</span><small>{[row.meta.author, row.meta.discipline, row.meta.locked ? 'Locked' : ''].filter(Boolean).join(' · ')}</small></button></li>)}</ul>
+          } }}><strong>Sheet {row.page + 1} · {row.kind} · {row.meta.status}</strong><span>{row.meta.subject || row.text || 'No comment'}</span><small>{[row.meta.author, row.meta.discipline, data.layers?.find(l => l.id === row.meta.layer)?.name, !markVisible(data, row.id) ? 'Hidden' : '', row.meta.carriedFrom ? 'Carried forward — verify' : '', row.meta.locked ? 'Locked' : ''].filter(Boolean).join(' · ')}</small></button></li>)}</ul>
         <div className="review-actions"><button onClick={() => onExport('csv')}>Export CSV</button><button onClick={() => onExport('pdf')}>Review report</button><button onClick={onFlatten}>Save flattened copy…</button></div>
       </details>
       <p role="status">{message}</p>

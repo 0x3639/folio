@@ -17,6 +17,7 @@
     "dist:linux": "npm run build && electron-builder --linux --publish never",
     "smoke:review": "node scripts/smoke-review-test.mjs",
     "smoke": "node scripts/smoke-test.mjs",
+    "test:pdf-compatibility": "node scripts/test-pdf-compatibility.mjs",
     "test:drawing-review": "node scripts/test-drawing-review.mjs",
     "test:measurements": "node scripts/test-measurements.mjs",
     "test:chat-math": "node scripts/test-chat-math.mjs"

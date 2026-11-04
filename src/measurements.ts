@@ -10,6 +10,8 @@ export interface Measurement {
   scale: PageScale;
 }
 export interface DrawingData {
+  layers?: import('./reviewModel').ReviewLayer[];
+  layerGroups?: Record<string, string[]>;
   review?: import('./reviewModel').ReviewMark[];
   reviewMeta?: Record<string, import('./reviewModel').ReviewMeta>;
   scales: Record<number, PageScale>; measurements: Measurement[] }

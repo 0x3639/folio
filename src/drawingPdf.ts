@@ -1,4 +1,5 @@
-import { PDFDocument, PDFName, PDFHexString, PDFString, PDFDict, PDFArray, PDFStream, PDFNumber, StandardFonts, rgb, pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject } from 'pdf-lib';
+import { readReviewLayers, writeReviewLayers, layerAppearance, setLayerVisibility } from './reviewLayersPdf';
+import { PDFDocument, PDFName, PDFHexString, PDFString, PDFDict, PDFArray, PDFStream, PDFNumber, PDFRef, StandardFonts, rgb, pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject } from 'pdf-lib';
 import type { PDFPage, PDFFont } from 'pdf-lib';
 import type { StoredMark } from './recent';
 import { emptyDrawing, measurementLabel, type DrawingData, type Measurement, type Point } from './measurements';
@@ -20,7 +21,27 @@ function validMeta(value: unknown): ReviewMeta {
   const v = value as ReviewMeta;
   return { author: typeof v?.author === 'string' ? v.author.slice(0, 200) : '', discipline: typeof v?.discipline === 'string' ? v.discipline.slice(0, 200) : '', subject: typeof v?.subject === 'string' ? v.subject.slice(0, 200) : '', status: ['Open', 'Answered', 'Resolved'].includes(v?.status) ? v.status : 'Open', locked: v?.locked === true,
     group: typeof v?.group === 'string' ? v.group.slice(0, 200) : undefined,
+    ...(typeof v?.layer === 'string' && v.layer.length <= 200 ? { layer: v.layer } : {}),
+    ...(v?.carriedFrom && typeof v.carriedFrom.document === 'string' && Number.isInteger(v.carriedFrom.page) && v.carriedFrom.page >= 0 && Number.isFinite(v.carriedFrom.at) ? { carriedFrom: { ...v.carriedFrom, document: v.carriedFrom.document.slice(0, 500) } } : {}),
     replies: Array.isArray(v?.replies) ? v.replies.filter(r => r && typeof r.text === 'string' && typeof r.author === 'string' && Number.isFinite(r.at)).slice(0, 1000).map(r => ({ text: r.text.slice(0, 10000), author: r.author.slice(0, 200), at: r.at })) : [] };
+}
+function readNativeStyle(dict: PDFDict, mark: ReviewMark) {
+  const hex = (key: string) => {
+    const values = arrayNumbers(dict, key);
+    const rgb = values.length === 1 ? [values[0], values[0], values[0]] : values.length === 3 ? values : [];
+    return rgb.length === 3 && rgb.every(v => Number.isFinite(v) && v >= 0 && v <= 1) ? '#' + rgb.map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('') : undefined;
+  };
+  const stroke = hex('C'), fill = hex('IC'), opacity = dict.lookup(name('CA')), border = dict.lookup(name('BS'));
+  if (stroke) mark.style.color = stroke;
+  mark.style.fill = fill ?? 'none';
+  if (opacity instanceof PDFNumber && opacity.asNumber() >= .05 && opacity.asNumber() <= 1) mark.style.opacity = opacity.asNumber();
+  if (border instanceof PDFDict) {
+    const width = border.lookup(name('W'));
+    if (width instanceof PDFNumber && width.asNumber() >= .1 && width.asNumber() <= 20) mark.style.width = width.asNumber();
+    mark.style.dash = border.get(name('S'))?.toString() === '/D' ? arrayNumbers(border, 'D')[0] === 1 ? 'dotted' : 'dashed' : 'solid';
+  }
+  const size = /\/[^\s]+\s+([\d.]+)\s+Tf/.exec(readText(dict, 'DA'));
+  if (size && Number(size[1]) >= 6 && Number(size[1]) <= 96) mark.style.fontSize = Number(size[1]);
 }
 function validMeasurement(m: Measurement, pages: number) {
   return m && typeof m.id === 'string' && m.id.length < 200 && Number.isInteger(m.page) && m.page >= 0 && m.page < pages && ['Length', 'Area', 'Perimeter', 'Count'].includes(m.kind) && Array.isArray(m.points) && m.points.length >= (m.kind === 'Count' ? 1 : m.kind === 'Length' ? 2 : 3) && m.points.length <= 5000 && m.points.every(p => Array.isArray(p) && p.length === 2 && p.every(n => Number.isFinite(n) && Math.abs(n) < 1e7)) && m.scale && Number.isFinite(m.scale.unitsPerPoint) && m.scale.unitsPerPoint > 0 && ['ft', 'in', 'm', 'cm', 'mm'].includes(m.scale.unit);
@@ -31,7 +52,7 @@ async function fontsFor(pdf: PDFDocument, values: string[], fontBytes?: Uint8Arr
   const fontkit = (await import('@pdf-lib/fontkit')).default;
   pdf.registerFontkit(fontkit);
   const bytes = fontBytes ?? new Uint8Array(await (await fetch(`${import.meta.env.BASE_URL}pdfjs/standard_fonts/LiberationSans-Regular.ttf`)).arrayBuffer());
-  const unicode = await pdf.embedFont(bytes, { subset: true });
+  const unicode = await pdf.embedFont(bytes, { subset: false });
   const supported = new Set(unicode.getCharacterSet());
   if (values.some(t => [...t].some(c => c !== '\n' && c !== '\r' && !supported.has(c.codePointAt(0)!)))) throw new Error('The PDF font does not support some characters in your notes. Please use another spelling before exporting.');
   return { sans: unicode, serif: unicode, mono: unicode };
@@ -66,35 +87,85 @@ function paint(page: PDFPage, mark: ReviewMark, fonts: Record<string, PDFFont>, 
   return rect;
 }
 
+function writeDiscussion(pdf: PDFDocument, page: PDFPage, parent: PDFRef, annotation: PDFDict, meta: ReviewMeta) {
+  const list = page.node.Annots();
+  const replies: PDFDict[] = [];
+  if (list) for (let i = 0; i < list.size(); i++) {
+    const d = list.lookup(i); if (d instanceof PDFDict && d.get(name('IRT'))?.toString() === parent.toString()) replies.push(d);
+  }
+  const rect = arrayNumbers(annotation, 'Rect');
+  if (rect.length !== 4) return;
+  const oc = annotation.get(name('OC'));
+  const add = (extra: Record<string, unknown>) => {
+    const dict = pdf.context.obj({ Type: 'Annot', Subtype: 'Text', P: page.ref, Rect: [rect[0], rect[1], rect[0] + 20, rect[1] + 20], IRT: parent, RT: 'R', F: 28, ...(oc ? { OC: oc } : {}), FolioReply: true, ...extra });
+    const flags = annotation.lookup(name('F'));
+    setLayerVisibility(dict, !(flags instanceof PDFNumber && (flags.asNumber() & 2)));
+    page.node.addAnnot(pdf.context.register(dict)); return dict;
+  };
+  const parentFlags = annotation.lookup(name('F'));
+  for (const reply of replies) setLayerVisibility(reply, !(parentFlags instanceof PDFNumber && (parentFlags.asNumber() & 2)));
+  for (const reply of meta.replies) if (!replies.some(r => readText(r, 'Contents') === reply.text && readText(r, 'T') === reply.author)) add({ T: text(reply.author), Contents: text(reply.text), M: PDFString.fromDate(new Date(reply.at)) });
+  let stateReply = replies.find(r => r.get(name('FolioStatus'))?.toString() === 'true');
+  if (!stateReply && meta.status !== 'Open') {
+    const blank = pdf.context.register(pdf.context.formXObject([], { BBox: [0, 0, 20, 20] }));
+    stateReply = add({ FolioStatus: true, AP: { N: blank }, T: text(meta.author) });
+  }
+  if (stateReply) {
+    const state = meta.status === 'Resolved' ? 'Completed' : meta.status === 'Answered' ? 'Accepted' : 'None';
+    stateReply.set(name('StateModel'), PDFString.of('Review')); stateReply.set(name('State'), PDFString.of(state));
+    stateReply.set(name('FolioSavedState'), PDFString.of(state)); stateReply.set(name('M'), PDFString.fromDate(new Date()));
+  }
+}
+
 /** Native annotations carry appearances for other readers and structured records for Folio. */
 export async function exportDrawingPdf(bytes: Uint8Array, data: DrawingData, order?: number[] | null, flatten = false, fontBytes?: Uint8Array, legacyMarks: StoredMark[] = []) {
-  if (!data.measurements.length && !data.review?.length && !Object.keys(data.scales).length && !Object.keys(data.reviewMeta ?? {}).length && !flatten) return bytes;
+  if (!data.measurements.length && !data.review?.length && !Object.keys(data.scales).length && !Object.keys(data.reviewMeta ?? {}).length && !data.layers?.length && !flatten) return bytes;
   const pdf = await PDFDocument.load(bytes);
+  const layerRefs = writeReviewLayers(pdf, data.layers);
   const scratch = await PDFDocument.create();
   const fonts = await fontsFor(scratch, [...(data.review ?? []).map(m => m.text), ...data.measurements.map(measurementLabel)], fontBytes);
   const all = [...(data.review ?? []).map(mark => ({ mark, measurement: undefined as Measurement | undefined })), ...data.measurements.map(measurement => ({ mark: measurementMark(measurement), measurement }))];
+  const prepared: { mark: ReviewMark; measurement?: Measurement; index: number; appearance: PDFPage; rect: number[] }[] = [];
   for (const { mark, measurement } of all) {
     const index = order?.length ? order.indexOf(mark.page + 1) : mark.page;
     if (index < 0 || index >= pdf.getPageCount()) continue;
     const target = pdf.getPage(index), appearance = scratch.addPage([target.getWidth(), target.getHeight()]);
     const rect = paint(appearance, mark, fonts, measurement);
-    const form = await pdf.embedPage(appearance, { left: rect[0], bottom: rect[1], right: rect[2], top: rect[3] });
+    prepared.push({ mark, measurement, index, appearance, rect });
+  }
+  // Resolve fonts before copying scratch pages. A shared copy keeps embedded fonts/resources shared.
+  for (const font of new Set(Object.values(fonts))) await font.embed();
+  const forms = await pdf.embedPages(prepared.map(p => p.appearance), prepared.map(({ rect }) => ({ left: rect[0], bottom: rect[1], right: rect[2], top: rect[3] })));
+  for (const [i, { mark, measurement, index, rect }] of prepared.entries()) {
+    const target = pdf.getPage(index), form = forms[i];
     await form.embed();
+    const resources = (pdf.context.lookup(form.ref) as PDFStream).dict.lookup(name('Resources')) as PDFDict;
+    const appearanceFonts = resources.lookup(name('Font'));
     const meta = metaFor(data, mark.id);
     const subtype = measurement ? (measurement.kind === 'Length' ? 'Line' : measurement.kind === 'Count' ? 'Ink' : 'Polygon')
       : ['Callout', 'Cloud callout', 'Text'].includes(mark.kind) ? 'FreeText' : mark.kind === 'Stamp' ? 'Stamp' : mark.kind === 'Rectangle' ? 'Square' : mark.kind === 'Oval' ? 'Circle' : ['Line', 'Arrow'].includes(mark.kind) ? 'Line' : 'Polygon';
     const exportedMark = { ...(measurement ?? mark), page: index };
-    const props: NonNullable<Parameters<typeof pdf.context.formXObject>[1]> = { Type: 'Annot', Subtype: subtype, Rect: rect, AP: { N: form.ref }, F: meta.locked ? 132 : 4, NM: text(mark.id), T: text(meta.author), Subj: text(meta.subject || mark.kind), Contents: text(measurement ? measurementLabel(measurement) : mark.text), C: rgbValues(mark.style.color), CA: mark.style.opacity,
+    const props: NonNullable<Parameters<typeof pdf.context.formXObject>[1]> = { Type: 'Annot', Subtype: subtype, P: target.ref, Rect: rect, CreationDate: PDFString.fromDate(new Date(mark.createdAt || Date.now())), M: PDFString.fromDate(new Date()), AP: { N: form.ref }, F: meta.locked ? 132 : 4, NM: text(mark.id), T: text(meta.author), Subj: text(meta.subject || mark.kind), Contents: text(measurement ? measurementLabel(measurement) : mark.text), C: rgbValues(mark.style.color), CA: mark.style.opacity,
       BS: { W: mark.style.width, S: mark.style.dash === 'solid' ? 'S' : 'D', D: mark.style.dash === 'dotted' ? [1, 3] : [6, 3] },
       FolioReview: text(JSON.stringify({ version: 1, type: measurement ? 'measurement' : 'review', mark: exportedMark, meta, rect })) };
+    if (meta.layer && layerRefs.has(meta.layer)) props.OC = layerRefs.get(meta.layer);
     if (mark.style.fill !== 'none') props.IC = rgbValues(mark.style.fill);
-    if (subtype === 'Line') { props.L = mark.points.slice(0, 2).flat(); props.LE = ['None', mark.style.arrow ? 'OpenArrow' : 'None'].map(name); }
+    if (subtype === 'Line') { props.L = mark.points.slice(0, 2).flat(); props.LE = ['None', mark.kind === 'Arrow' || mark.style.arrow ? 'OpenArrow' : 'None'].map(name); }
     if (subtype === 'Polygon') props.Vertices = (mark.kind === 'Cloud' ? reviewGeometry(mark).paths[0].points : mark.points).flat();
     if (subtype === 'Ink') props.InkList = mark.points.map(([x, y]) => [x - 2, y, x + 2, y]);
     if (subtype === 'FreeText') {
-      props.DA = PDFString.of(`/${mark.style.font === 'serif' ? 'TiRo' : mark.style.font === 'mono' ? 'Cour' : 'Helv'} ${mark.style.fontSize} Tf ${rgbValues(mark.style.color).join(' ')} rg`);
+      const entry = appearanceFonts instanceof PDFDict ? appearanceFonts.entries()[0] : undefined;
+      const fontRef = entry?.[1] ?? (await pdf.embedFont(StandardFonts.Helvetica)).ref;
+      const fontName = name(pdf.context.addRandomSuffix('FolioReviewFont', 10));
+      const acroForm = pdf.catalog.getOrCreateAcroForm().dict;
+      let dr = acroForm.lookup(name('DR')); if (!(dr instanceof PDFDict)) { dr = pdf.context.obj({}); acroForm.set(name('DR'), dr); }
+      let fontResources = (dr as PDFDict).lookup(name('Font')); if (!(fontResources instanceof PDFDict)) { fontResources = pdf.context.obj({}); (dr as PDFDict).set(name('Font'), fontResources); }
+      (fontResources as PDFDict).set(fontName, fontRef);
+      const localFonts = appearanceFonts instanceof PDFDict ? appearanceFonts.clone() : pdf.context.obj({});
+      localFonts.set(fontName, fontRef); props.DR = pdf.context.obj({ Font: localFonts });
+      props.DA = PDFString.of(`${fontName.toString()} ${mark.style.fontSize} Tf ${rgbValues(mark.style.color).join(' ')} rg`);
       props.Q = 0;
-      if (mark.kind.includes('callout') || mark.kind === 'Callout') { props.IT = name('FreeTextCallout'); props.CL = mark.points.flat(); }
+      if (mark.kind.includes('callout') || mark.kind === 'Callout') { props.IT = name('FreeTextCallout'); props.CL = reviewGeometry(mark).paths[mark.kind === 'Cloud callout' ? 1 : 0].points.flat(); }
     }
     if (measurement && measurement.kind !== 'Count') props.Measure = {
       Type: 'Measure', Subtype: 'RL', R: text(`1 pt = ${measurement.scale.unitsPerPoint} ${measurement.scale.unit}`),
@@ -103,9 +174,11 @@ export async function exportDrawingPdf(bytes: Uint8Array, data: DrawingData, ord
       A: [{ Type: 'NumberFormat', U: text(measurement.scale.unit + '²'), C: measurement.scale.unitsPerPoint ** 2 }],
     };
     const annotation = pdf.context.obj(props);
+    layerAppearance(pdf, annotation, meta.layer ? layerRefs.get(meta.layer) : undefined);
+    setLayerVisibility(annotation, data.layers?.find(l => l.id === meta.layer)?.visible !== false);
     const annotationRef = pdf.context.register(annotation);
     target.node.addAnnot(annotationRef);
-    for (const reply of meta.replies) target.node.addAnnot(pdf.context.register(pdf.context.obj({ Type: 'Annot', Subtype: 'Text', Rect: [rect[0], rect[1], rect[0] + 20, rect[1] + 20], IRT: annotationRef, RT: 'R', F: 4, T: text(reply.author), Contents: text(reply.text), FolioReply: true })));
+    writeDiscussion(pdf, target, annotationRef, annotation, meta);
     annotation.set(name('StateModel'), PDFString.of('Review'));
     annotation.set(name('State'), PDFString.of(meta.status === 'Resolved' ? 'Completed' : meta.status === 'Answered' ? 'Accepted' : 'None'));
   }
@@ -133,11 +206,17 @@ export async function exportDrawingPdf(bytes: Uint8Array, data: DrawingData, ord
         });
         if (legacy) { matched.add(legacy.id); meta = data.reviewMeta?.[legacy.id]; }
       }
-      if (meta) {
+      if (meta && !dict.has(name('FolioReply')) && !dict.has(name('IRT'))) {
+        setLayerVisibility(dict, true);
+        if (meta.layer && layerRefs.has(meta.layer)) dict.set(name('OC'), layerRefs.get(meta.layer)!);
+        else if (dict.lookup(name('OC')) instanceof PDFDict && readText(dict.lookup(name('OC')) as PDFDict, 'FolioLayerId')) dict.delete(name('OC'));
+        layerAppearance(pdf, dict, meta.layer ? layerRefs.get(meta.layer) : undefined);
         dict.set(name('FolioReviewMeta'), text(JSON.stringify(meta))); dict.set(name('Subj'), text(meta.subject)); if (meta.author) dict.set(name('T'), text(meta.author));
         const flags = dict.lookup(name('F')); const previousFlags = flags instanceof PDFNumber ? flags.asNumber() : 4;
         if (typeof meta.locked === 'boolean') dict.set(name('F'), PDFNumber.of(meta.locked ? previousFlags | 128 : previousFlags & ~128));
         dict.set(name('StateModel'), PDFString.of('Review')); dict.set(name('State'), PDFString.of(meta.status === 'Resolved' ? 'Completed' : meta.status === 'Answered' ? 'Accepted' : 'None'));
+        setLayerVisibility(dict, data.layers?.find(l => l.id === meta.layer)?.visible !== false);
+        if (ref instanceof PDFRef) writeDiscussion(pdf, page, ref, dict, meta);
       }
     }
   }
@@ -150,7 +229,8 @@ export async function importDrawingPdf(bytes: Uint8Array): Promise<{ bytes: Uint
   const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
   if (pdf.isEncrypted) return { bytes };
   const data = emptyDrawing(); data.review = []; data.reviewMeta = {};
-  let changed = false;
+  Object.assign(data, readReviewLayers(pdf));
+  let changed = !!data.layers?.length;
   const ids = new Set<string>();
   for (const [pageIndex, page] of pdf.getPages().entries()) {
     try {
@@ -163,9 +243,11 @@ export async function importDrawingPdf(bytes: Uint8Array): Promise<{ bytes: Uint
     for (let i = annotations.size() - 1; i >= 0; i--) {
       const dict = annotations.lookup(i);
       if (!(dict instanceof PDFDict)) continue;
+      const nativeLayer = dict.lookup(name('OC'));
+      if (!dict.has(name('FolioReview')) && nativeLayer instanceof PDFDict && data.layers?.some(l => l.id === readText(nativeLayer, 'FolioLayerId'))) setLayerVisibility(dict, true);
       if (dict.get(name('FolioReply'))?.toString() === 'true' && dict.has(name('IRT'))) continue;
       const nativeMeta = readText(dict, 'FolioReviewMeta');
-      if (nativeMeta && nativeMeta.length < 1000000) {
+      if (!dict.has(name('FolioReview')) && nativeMeta && nativeMeta.length < 1000000) {
         try {
           const id = `pdf:${pageIndex}:${annotations.get(i).toString().replace(/ (\d+) R$/, (_, generation) => generation === '0' ? 'R' : `R${generation}`)}`;
           data.reviewMeta[id] = validMeta(JSON.parse(nativeMeta)); changed = true;
@@ -179,29 +261,54 @@ export async function importDrawingPdf(bytes: Uint8Array): Promise<{ bytes: Uint
         if (record.version !== 1 || ids.has(mark.id) || !(record.type === 'review' ? validateReviewMark(mark, pdf.getPageCount()) : record.type === 'measurement' && validMeasurement(mark, pdf.getPageCount()))) continue;
         // Respect moves/resizes and text changes made by another PDF reader.
         const rect = arrayNumbers(dict, 'Rect'), old = record.rect;
-        if (rect.length === 4 && rect.every(Number.isFinite) && Array.isArray(old) && old.length === 4 && old.every(Number.isFinite) && old[2] > old[0] && old[3] > old[1]) {
+        if (rect.length === 4 && rect.every(Number.isFinite) && Array.isArray(old) && old.length === 4 && old.every(Number.isFinite) && old[2] > old[0] && old[3] > old[1] && rect[2] > rect[0] && rect[3] > rect[1]) {
           mark.points = mark.points.map(([x, y]: Point) => [rect[0] + (x - old[0]) * (rect[2] - rect[0]) / (old[2] - old[0]), rect[1] + (y - old[1]) * (rect[3] - rect[1]) / (old[3] - old[1])]);
         }
+        // Native geometry wins when another reader edits endpoints rather than moving the whole box.
+        const key = dict.get(name('Subtype'))?.toString() === '/Line' ? 'L' : mark.kind === 'Polygon' || ['Area', 'Perimeter'].includes(mark.kind) ? 'Vertices' : undefined;
+        if (key) {
+          const coordinates = arrayNumbers(dict, key);
+          // The stored points were transformed above, so compare against the pre-transform record.
+          const savedPoints = JSON.parse(encoded).mark.points as Point[];
+          if (coordinates.length >= (key === 'L' ? 4 : 6) && coordinates.length % 2 === 0 && coordinates.every(Number.isFinite) && JSON.stringify(coordinates) !== JSON.stringify(savedPoints.flat())) {
+            mark.points = Array.from({ length: coordinates.length / 2 }, (_, j) => [coordinates[j * 2], coordinates[j * 2 + 1]]);
+          }
+        }
+        if (record.type === 'review') readNativeStyle(dict, mark);
         if (record.type === 'review') { mark.text = readText(dict, 'Contents'); if (!validateReviewMark(mark, pdf.getPageCount())) continue; data.review.push(mark); }
         else { if (!validMeasurement(mark, pdf.getPageCount())) continue; data.measurements.push(mark); }
         const meta = validMeta(record.meta);
         const state = readText(dict, 'State');
         if (state === 'Completed') meta.status = 'Resolved'; else if (state === 'Accepted') meta.status = 'Answered'; else if (state === 'None') meta.status = 'Open';
         const flags = dict.lookup(name('F')); if (flags instanceof PDFNumber) meta.locked = !!(flags.asNumber() & 128);
-        const author = readText(dict, 'T'); if (author) meta.author = author;
+        if (dict.has(name('T'))) meta.author = readText(dict, 'T').slice(0, 200);
+        if (dict.has(name('Subj'))) { const subject = readText(dict, 'Subj'); if (subject !== mark.kind || meta.subject) meta.subject = subject.slice(0, 200); }
         data.reviewMeta[mark.id] = meta;
         ids.add(mark.id); recognizedRefs.set(annotations.get(i).toString(), mark.id); annotations.remove(i); changed = true;
       } catch { /* Invalid metadata must never remove the visible PDF annotation. */ }
     }
-    // Replies are detached only after their parent has been restored successfully.
-    for (let i = annotations.size() - 1; i >= 0; i--) {
-      const dict = annotations.lookup(i);
-      if (!(dict instanceof PDFDict) || dict.get(name('Subtype'))?.toString() !== '/Text') continue;
-      const parent = recognizedRefs.get(dict.get(name('IRT'))?.toString() ?? '');
-      if (!parent) continue;
-      const reply = readText(dict, 'Contents'), author = readText(dict, 'T'), meta = data.reviewMeta[parent];
-      if (reply && !meta.replies.some(r => r.text === reply && r.author === author)) meta.replies.push({ text: reply.slice(0, 10000), author: author.slice(0, 200), at: Date.now() });
-      annotations.remove(i);
+    // Resolve whole threads before detaching replies; nested replies may precede their parents.
+    const consumedStates = new Set<string>();
+    let detached = true;
+    while (detached) {
+      detached = false;
+      for (let i = annotations.size() - 1; i >= 0; i--) {
+        const dict = annotations.lookup(i);
+        if (!(dict instanceof PDFDict)) continue;
+        const subtype = dict.get(name('Subtype'))?.toString();
+        const parent = recognizedRefs.get(dict.get(name(subtype === '/Popup' ? 'Parent' : 'IRT'))?.toString() ?? '');
+        if (!parent || !['/Text', '/Popup'].includes(subtype ?? '')) continue;
+        const reply = readText(dict, 'Contents'), author = readText(dict, 'T'), meta = data.reviewMeta[parent];
+        if (readText(dict, 'StateModel') === 'Review') {
+          const state = readText(dict, 'State');
+          if (state !== readText(dict, 'FolioSavedState') && !consumedStates.has(parent)) {
+            if (state === 'Completed') meta.status = 'Resolved'; else if (state === 'Accepted') meta.status = 'Answered'; else if (state === 'None') meta.status = 'Open';
+            consumedStates.add(parent);
+          }
+        } else if (subtype === '/Text' && reply && !meta.replies.some(r => r.text === reply && r.author === author)) meta.replies.push({ text: reply.slice(0, 10000), author: author.slice(0, 200), at: Date.now() });
+        recognizedRefs.set(annotations.get(i).toString(), parent);
+        annotations.remove(i); detached = true;
+      }
     }
   }
   if (!changed) return { bytes };
@@ -209,6 +316,7 @@ export async function importDrawingPdf(bytes: Uint8Array): Promise<{ bytes: Uint
 }
 
 export function flattenAnnotations(pdf: PDFDocument) {
+  const hiddenLayers = new Set((readReviewLayers(pdf).layers ?? []).filter(l => !l.visible).map(l => l.id));
   if (pdf.catalog.has(name('AcroForm'))) pdf.getForm().flatten({ updateFieldAppearances: false });
   for (const page of pdf.getPages()) {
     const annotations = page.node.Annots(); if (!annotations) continue;
@@ -216,7 +324,10 @@ export function flattenAnnotations(pdf: PDFDocument) {
       const dict = annotations.lookup(i); if (!(dict instanceof PDFDict)) continue;
       const subtype = dict.get(name('Subtype'))?.toString();
       if (subtype === '/Link') continue;
+      const flags = dict.lookup(name('F')), oc = dict.lookup(name('OC'));
+      if (flags instanceof PDFNumber && (flags.asNumber() & 3) || oc instanceof PDFDict && hiddenLayers.has(readText(oc, 'FolioLayerId'))) { annotations.remove(i); continue; }
       if (subtype === '/Popup' || subtype === '/Text' && dict.has(name('IRT'))) { annotations.remove(i); continue; }
+      layerAppearance(pdf, dict);
       const ap = dict.lookup(name('AP'));
       let stream = ap instanceof PDFDict ? ap.lookup(name('N')) : undefined;
       if (stream instanceof PDFDict) stream = stream.lookup(dict.get(name('AS')) as PDFName);
@@ -234,6 +345,8 @@ export function flattenAnnotations(pdf: PDFDocument) {
     }
     page.node.delete(name('FolioPageScale'));
   }
+  // Keep standard groups for any original page content, but no editable Folio layer records.
+  for (const [, object] of pdf.context.enumerateIndirectObjects()) if (object instanceof PDFDict && object.get(name('Type'))?.toString() === '/OCG') object.delete(name('FolioLayerId'));
 }
 export async function reviewReport(rows: ReviewRow[], title: string): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
@@ -251,6 +364,7 @@ export async function reviewReport(rows: ReviewRow[], title: string): Promise<Ui
   for (const row of rows) {
     write(`Sheet ${row.page + 1} — ${row.kind} — ${row.meta.status}`, 12);
     if (row.meta.subject) write(row.meta.subject, 12);
+    if (row.meta.carriedFrom) write(`Carried from ${row.meta.carriedFrom.document}, sheet ${row.meta.carriedFrom.page + 1}. Verify against this revision.`);
     write([row.meta.author, row.meta.discipline].filter(Boolean).join(' / '));
     write(row.text);
     for (const reply of row.meta.replies) write(`${reply.author || 'Reviewer'}: ${reply.text}`);

@@ -28,6 +28,10 @@ jobs:
       - run: npm run test:chat-math
       - run: npm run test:measurements
       - run: npm run test:drawing-review
+      - run: npm run test:pdf-compatibility
+      - name: Apple PDF engine compatibility
+        if: runner.os == 'macOS'
+        run: swift -module-cache-path release/swift-module-cache scripts/test-pdfkit-compatibility.swift release/smoke
       - run: node --test scripts/test-word-files.cjs scripts/test-network-security.cjs scripts/test-release-build.mjs
       - run: npm run build
       - name: Smoke test (Linux, virtual display)
