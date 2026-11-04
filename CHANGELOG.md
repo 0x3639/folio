@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.15.1
+
+- After you update Folio, **What's new** shows the changes once. If you skip versions, it includes the releases you missed.
+- Open **Settings → About → View changelog** to browse five releases at a time. Expand a version to read its notes, or follow **View releases on GitHub**.
+- Closing the Ask AI panel now stops the answer in progress.
+
 ## 1.15.0
 
 - Choose **Edit mode** to change text in a PDF or replace an embedded picture with a PNG or JPEG. Choose **Save copy** to keep the edited PDF.

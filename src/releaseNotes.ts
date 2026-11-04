@@ -20,8 +20,8 @@ function parse(text: string): Release[] {
   return releases;
 }
 
-export const releases = parse(changelog);
 const byVersion = new Intl.Collator("en", { numeric: true });
+export const releases = parse(changelog).filter(r => byVersion.compare(r.version, installed) <= 0);
 
 export function takeUpgradeNotes(): Release[] {
   const key = "folio:last-opened-version";
@@ -31,7 +31,7 @@ export function takeUpgradeNotes(): Release[] {
     localStorage.setItem(key, installed);
     // Older releases saved the sidebar preference on first launch, before version tracking existed.
     if (!previous) return localStorage.getItem("folio:sidebar") === null ? [] : releases.filter(r => r.version === installed);
-    return releases.filter(r => byVersion.compare(r.version, previous) > 0 && byVersion.compare(r.version, installed) <= 0);
+    return releases.filter(r => byVersion.compare(r.version, previous) > 0);
   } catch {
     return []; // If the version can't be saved, don't repeat the popup on every launch.
   }

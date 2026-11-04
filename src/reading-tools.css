@@ -876,13 +876,38 @@
   padding-top: 14px;
   border-top: 1px solid var(--line);
 }
-.modal:has(.upgrade-footer) {
+.modal:has(.changelog) {
   display: flex;
   flex-direction: column;
 }
-.modal:has(.upgrade-footer) .changelog {
+.modal .changelog {
   overflow-y: auto;
 }
+.changelog details + details { border-top: 1px solid var(--line); }
+.changelog summary {
+  padding: 10px 0;
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--text);
+}
+.changelog details ul { padding-bottom: 12px; }
+.history-footer {
+  margin: 0 14px;
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.history-footer nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.history-footer a { color: var(--accent-text); }
 .upgrade-footer {
   display: flex;
   align-items: center;

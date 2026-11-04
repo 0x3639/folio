@@ -508,7 +508,23 @@ try {
   // Settings links to the bundled changelog, and closing it returns to Settings.
   await page.keyboard.press(process.platform === "darwin" ? "Meta+Comma" : "Control+Comma");
   await page.getByRole("button", { name: "View changelog" }).click();
-  await page.getByRole("dialog", { name: "What's new" }).locator("h3").first().waitFor();
+  const summaries = whatsNew.locator("summary");
+  await summaries.first().waitFor();
+  const firstPage = await summaries.allTextContents();
+  assert.equal(firstPage.length, 5);
+  assert.equal(firstPage[0], "Folio " + installed);
+  assert.equal(await whatsNew.locator("details[open]").count(), 1);
+  await summaries.nth(1).click();
+  assert.ok(await whatsNew.locator("details").nth(1).locator("li").first().isVisible());
+  const older = whatsNew.getByRole("button", { name: "Older releases" });
+  const newer = whatsNew.getByRole("button", { name: "Newer releases" });
+  assert.ok(await newer.isDisabled());
+  await older.click();
+  assert.ok(!(await summaries.allTextContents()).some(version => firstPage.includes(version)));
+  await newer.click();
+  assert.deepEqual(await summaries.allTextContents(), firstPage);
+  assert.equal(await whatsNew.getByRole("link", { name: "View releases on GitHub" }).getAttribute("href"),
+    "https://github.com/Forward-Future/folio-releases/releases");
   await page.keyboard.press("Escape");
   await page.getByRole("dialog", { name: "Settings" }).waitFor();
   await page.keyboard.press("Escape");
