@@ -34,6 +34,20 @@ Folio's builds aren't signed with paid developer certificates yet, so the first 
 
 Or build Folio yourself from source (below).
 
+## Drawing review test releases
+
+The `blue-beam` branch can publish a prerelease on `0x3639/folio` by pushing a new
+`test-blue-beam-N` tag, where `N` is an unused positive integer. The **Drawing review test release**
+workflow checks the tagged commit belongs to that branch, tests and builds Windows, macOS, and Linux,
+and calls `npm run release -- --test-publish test-artifacts` only when every platform succeeds.
+The normal stable release command and upstream release destination are unchanged.
+
+Test installers are named **Folio Drawing Review Test**, use a separate app identity and data folder,
+and do not use the stable updater, apt source, or file associations. Download updates manually from
+this fork's prereleases. Windows builds are unsigned; macOS builds are ad-hoc signed rather than
+Developer ID notarized. The release notes include first-launch instructions and SHA-256 checksums.
+Use copies of drawings for initial testing.
+
 ## Features
 
 ### Measure and review drawings

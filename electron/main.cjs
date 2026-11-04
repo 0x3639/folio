@@ -14,6 +14,11 @@ const { csp } = require("./csp.cjs");
 const { WORD_FILE, openWord } = require("./convert.cjs");
 const { MAX_DOCUMENT_BYTES, checkDiskPath, readRegular } = require("./document-files.cjs");
 
+const TEST_BUILD = require("../package.json").folioTestBuild === true;
+if (TEST_BUILD) {
+  app.setName("Folio Drawing Review Test");
+  app.setPath("userData", path.join(app.getPath("appData"), "Folio Drawing Review Test"));
+}
 if (!app.isPackaged && process.env.FOLIO_TEST_USER_DATA) app.setPath("userData", process.env.FOLIO_TEST_USER_DATA);
 // Automated tests drive a window that never appears, so a local run doesn't take over the screen or focus.
 const TEST_HIDDEN = !app.isPackaged && process.env.FOLIO_TEST_HIDDEN === "1";
@@ -204,6 +209,7 @@ const MAC_SIGNED = !!require("../package.json").folioMacSigned;
 const NOTIFY_ONLY = IS_MAC && !MAC_SIGNED;
 
 function setupAutoUpdate() {
+  if (TEST_BUILD) { updateStatus = { state: "unsupported" }; return; }
   loadUpdatePreference();
   // Installed Windows builds, Linux AppImages, and Macs check for updates. Dev runs and the portable Windows exe
   // don't; Linux packages (.deb) are updated by apt along with the rest of the system.

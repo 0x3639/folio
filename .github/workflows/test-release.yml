@@ -1,0 +1,142 @@
+name: Drawing review test release
+
+on:
+  push:
+    tags: ["test-blue-beam-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drawing-review-test-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.repository == '0x3639/folio' && !github.event.deleted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify branch test tag
+        shell: bash
+        run: |
+          set -eu
+          [[ "$GITHUB_REF_NAME" =~ ^test-blue-beam-[1-9][0-9]*$ ]]
+          git merge-base --is-ancestor HEAD refs/remotes/origin/blue-beam
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            target: win
+          - platform: macos
+            os: macos-latest
+            target: mac
+          - platform: linux
+            os: ubuntu-latest
+            target: linux
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Review and release checks
+        run: |
+          node --test scripts/test-release-build.mjs scripts/test-test-release.mjs
+          npm run test:measurements
+          npm run test:drawing-review
+          npm run test:pdf-compatibility
+      - name: Apple PDF engine compatibility
+        if: runner.os == 'macOS'
+        run: swift -module-cache-path release/swift-module-cache scripts/test-pdfkit-compatibility.swift release/smoke
+      - run: npm run build
+      - name: App tests (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          xvfb-run -a npm run smoke
+          xvfb-run -a npm run smoke:review
+      - name: App tests (Windows and macOS)
+        if: runner.os != 'Linux'
+        run: |
+          npm run smoke
+          npm run smoke:review
+      - name: Prepare isolated test installer
+        run: npm run release -- --test-prepare
+      - name: Build test version metadata
+        run: npm run build
+      - name: Package test installer
+        run: npx electron-builder --${{ matrix.target }} --publish never
+      - name: Packaged test app starts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "release/win-unpacked/Folio Drawing Review Test.exe" -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { throw "Test app exited with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+      - name: Packaged test app starts (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --verify --deep --verbose=2 "release/mac-universal/Folio Drawing Review Test.app"
+          "release/mac-universal/Folio Drawing Review Test.app/Contents/MacOS/Folio Drawing Review Test" > app.log 2>&1 &
+          pid=$!
+          sleep 20
+          if ! kill -0 "$pid"; then cat app.log; exit 1; fi
+          kill "$pid"
+      - name: Packaged test app starts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a release/linux-unpacked/folio-drawing-review-test --no-sandbox > app.log 2>&1 &
+          sleep 20
+          if ! pgrep -f linux-unpacked/folio-drawing-review-test > /dev/null; then cat app.log; exit 1; fi
+          pkill -f linux-unpacked/folio-drawing-review-test || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: folio-test-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            release/Folio-Test-*.exe
+            release/Folio-Test-*.dmg
+            release/Folio-Test-*.zip
+            release/Folio-Test-*.AppImage
+            release/Folio-Test-*.deb
+
+  publish:
+    name: Publish test release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: folio-test-*
+          path: test-artifacts
+      - name: Publish verified prerelease through the release command
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run release -- --test-publish test-artifacts

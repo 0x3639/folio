@@ -18,6 +18,11 @@ import path from "node:path";
 import { checkRelease, RELEASES_REPO } from "./check-release.mjs";
 import { artifactIds, releaseFiles, selectBuild, successfulAttempt, verifyReleaseTag, SOURCE_REPO, WORKFLOW } from "./release-build.mjs";
 
+if (process.argv.slice(2).some(arg => arg.startsWith("--test-"))) {
+  await (await import("./test-release.mjs")).runTestRelease(process.argv.slice(2));
+  process.exit(0);
+}
+
 const args = process.argv.slice(2);
 const notesAt = args.indexOf("--notes");
 const notes = notesAt >= 0 ? args[notesAt + 1] : "";
