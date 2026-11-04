@@ -54,6 +54,32 @@ try {
   assert.equal(platformClass, `platform-${process.platform}`);
   console.log("ok  platform:", platformClass);
 
+  const whatsNew = page.getByRole("dialog", { name: "What's new" });
+  const installed = await app.evaluate(({ app }) => app.getVersion());
+  assert.equal(await whatsNew.count(), 0, "a fresh install opens straight to the library");
+  assert.equal(await page.evaluate(() => localStorage.getItem("folio:last-opened-version")), installed);
+
+  // An older profile has a sidebar preference but has never recorded its Folio version.
+  await page.evaluate(() => localStorage.removeItem("folio:last-opened-version"));
+  await page.reload();
+  await whatsNew.getByRole("heading", { name: "Folio " + installed, exact: true }).waitFor();
+  assert.equal(await whatsNew.locator("section").count(), 1);
+  assert.ok(await whatsNew.getByRole("listitem").count() > 0);
+  await whatsNew.getByRole("button", { name: "Done" }).click();
+  assert.equal(await page.getByRole("dialog").count(), 0);
+
+  await page.evaluate(() => localStorage.setItem("folio:last-opened-version", "1.13.1"));
+  await page.reload();
+  await whatsNew.getByRole("heading", { name: "Folio 1.14.0", exact: true }).waitFor();
+  assert.equal(await whatsNew.locator("h3").first().textContent(), "Folio " + installed);
+  assert.equal(await whatsNew.getByRole("heading", { name: "Folio 1.13.1", exact: true }).count(), 0);
+  await page.keyboard.press("Escape");
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  await page.reload();
+  await page.getByRole("button", { name: /Try a sample/ }).waitFor();
+  assert.equal(await whatsNew.count(), 0, "reopening the same version doesn't repeat the popup");
+  console.log("ok  upgrades show bundled changes once, including skipped releases");
+
   await page.getByRole("button", { name: /Try a sample/ }).click();
   await page.locator(".textLayer span:not(.markedContent)").first().waitFor({ timeout: 30_000 });
   assert.match(await page.locator(".textLayer").first().innerText(), /A short tour of Folio/);

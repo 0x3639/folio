@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.15.0
+
+- Choose **Edit mode** to change text in a PDF or replace an embedded picture with a PNG or JPEG. Choose **Save copy** to keep the edited PDF.
+- Open **More → Version history** to see what changed and reopen or download an earlier copy.
+
 ## 1.14.0
 
 - Bookmark a page with the ribbon beside its thumbnail in **Pages**. Choose **Bookmarked** to see your saved pages and jump to one.

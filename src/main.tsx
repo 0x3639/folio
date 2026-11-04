@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { DocumentTabs, type ReaderFrame } from "./documentTabs";
+import { takeUpgradeNotes } from "./releaseNotes";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles.css";
 import "./reading-tools.css";
@@ -21,7 +22,8 @@ if (reader) {
     if (!frame) return;
     const app = createRoot(root);
     frame.disposeReader = () => app.unmount();
-    app.render(<App tabs={reader.tabs} tabKey={reader.key} />);
+    const upgradeNotes = desktop && reader.tabs.active === reader.key ? takeUpgradeNotes() : [];
+    app.render(<App tabs={reader.tabs} tabKey={reader.key} upgradeNotes={upgradeNotes} />);
   });
 } else {
   void new DocumentTabs(root).start();
