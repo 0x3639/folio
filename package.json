@@ -15,7 +15,10 @@
     "release": "node scripts/release.mjs",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
     "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "smoke:review": "node scripts/smoke-review-test.mjs",
     "smoke": "node scripts/smoke-test.mjs",
+    "test:drawing-review": "node scripts/test-drawing-review.mjs",
+    "test:measurements": "node scripts/test-measurements.mjs",
     "test:chat-math": "node scripts/test-chat-math.mjs"
   },
   "dependencies": {
@@ -25,6 +28,7 @@
   },
   "devDependencies": {
     "@embedpdf/pdfium": "2.15.1",
+    "@pdf-lib/fontkit": "^1.1.1",
     "@tesseract.js-data/eng": "^1.0.0",
     "@types/emscripten": "^1.41.6",
     "@types/react": "^19.3.0",

@@ -26,6 +26,8 @@ jobs:
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run test:chat-math
+      - run: npm run test:measurements
+      - run: npm run test:drawing-review
       - run: node --test scripts/test-word-files.cjs scripts/test-network-security.cjs scripts/test-release-build.mjs
       - run: npm run build
       - name: Smoke test (Linux, virtual display)
@@ -36,12 +38,16 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           xvfb-run -a node scripts/test-reader-security.mjs
           xvfb-run -a npm run smoke
+          xvfb-run -a npm run smoke:review
       - name: Reader security regressions
         if: runner.os != 'Linux'
         run: node scripts/test-reader-security.mjs
       - name: Smoke test
         if: runner.os != 'Linux'
         run: npm run smoke
+      - name: Drawing review smoke test
+        if: runner.os != 'Linux'
+        run: npm run smoke:review
       - uses: actions/upload-artifact@v7
         if: always()
         with:

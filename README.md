@@ -36,6 +36,40 @@ Or build Folio yourself from source (below).
 
 ## Features
 
+### Measure and review drawings
+
+- **Measure:** calibrate each sheet against a known dimension in feet, inches, meters, centimeters, or
+  millimeters. Place lengths, closed areas and perimeters, or counts. Measurements retain their original
+  calibration. Check a second known dimension before relying on takeoffs.
+- **Review:** add callouts, linked cloud callouts, text, stamps, lines, arrows, rectangles, ovals, clouds,
+  and polygons. Click the required points on the sheet; linked cloud callouts use two cloud corners and
+  a note location. Select a mark to edit its text, color, fill, line weight/style, opacity, font, or arrowhead.
+- **Edit precisely:** snap to vector drawing endpoints and existing mark vertices, hold Shift for 45°
+  angles, drag handles, or enter vertex coordinates. Select multiple marks to move, duplicate, group,
+  ungroup, or lock them. Scans have no vector endpoints, but marks can still be placed manually.
+- **Track reviews:** the markup list includes review marks, measurements, existing Folio annotations,
+  and annotations already in the PDF. Filter by status or discipline, search comments and authors, jump
+  to a mark, and track **Open → Answered → Resolved** with replies. Export a CSV or a paginated PDF report.
+- **Exchange PDFs:** ordinary saved copies contain native PDF annotations with printable appearances.
+  Callouts and measurements reopen as editable Folio records, including review fields and replies.
+  **Save flattened copy** creates a final copy with fixed marks; the working document stays editable.
+- **Compare revisions:** choose a revised PDF and matching sheet numbers. Pan and zoom together in
+  side-by-side views, or overlay the original in red and the revision in blue. Use **Align two points**
+  to match scale, rotation, and position before comparing changes.
+- **Reuse tools:** save frequently used notes, stamps, shapes, styles, and disciplines in the local tool
+  library. Starter tools include dimension checks, structural coordination, and a reviewed stamp.
+
+Review data and reusable tools are saved on this computer. Save a PDF copy to share your review.
+Drawing review and measurement tools currently require unsigned, unencrypted PDFs. Standard PDF
+annotation support varies between readers: Folio preserves its own editing records, while other readers
+use standard annotation fields and appearances. Existing third-party annotations can be listed and
+reviewed; their original geometry/content is not rewritten by the review panel. Reply threads and
+custom fields are retained in Folio's saved annotation data. Flattening requires printable appearances
+and reports a failure instead of silently dropping unsupported annotations.
+
+This is not full Bluebeam parity. Remaining areas include multiple scale regions, fractional
+architectural units, polylength, area cutouts, volume, automatic change detection, and shared live reviews.
+
 ### Open PDFs and web links
 
 - **Document tabs.** Pick or drop several PDFs together, or choose **More → New tab**. The tab strip appears beneath

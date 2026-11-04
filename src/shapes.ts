@@ -1,11 +1,28 @@
 import { AnnotationEditorType } from "pdfjs-dist";
 import type { PDFViewer } from "./viewer";
 
-export type Shape = "Rectangle" | "Oval" | "Arrow";
+export type Shape = "Rectangle" | "Oval" | "Arrow" | "Line" | "Cloud";
 type Point = [number, number];
 
 function strokes(shape: Shape, start: Point, end: Point, scale: number): Point[][] {
   const [x, y] = start, [a, b] = end;
+  if (shape === "Line") return [[start, end]];
+  if (shape === "Cloud") {
+    const left = Math.min(x, a), right = Math.max(x, a), top = Math.min(y, b), bottom = Math.max(y, b);
+    const corners: Point[] = [[left, top], [right, top], [right, bottom], [left, bottom], [left, top]];
+    const cloud: Point[] = [];
+    for (let side = 0; side < 4; side++) {
+      const from = corners[side], to = corners[side + 1];
+      const dx = to[0] - from[0], dy = to[1] - from[1], length = Math.hypot(dx, dy);
+      if (!length) continue;
+      const lobes = Math.max(1, Math.ceil(length / (16 * scale)));
+      for (let lobe = 0; lobe < lobes; lobe++) for (let step = 0; step < 9; step++) {
+        const t = step / 8, along = (lobe + t) / lobes, bulge = Math.sin(t * Math.PI) * length / lobes / 3;
+        cloud.push([from[0] + dx * along + dy / length * bulge, from[1] + dy * along - dx / length * bulge]);
+      }
+    }
+    return cloud.length ? [[...cloud, cloud[0], cloud[0]]] : [];
+  }
   if (shape === "Rectangle") {
     // Individual straight segments keep pdf.js from smoothing the corners as freehand ink.
     return [[start, [a, y]], [[a, y], end], [end, [x, b]], [[x, b], start]];
@@ -78,7 +95,7 @@ export function drawShapes(container: HTMLElement, viewer: PDFViewer, shape: Sha
       const end = localPoint(event);
       finish();
       const dx = Math.abs(start[0] - end[0]), dy = Math.abs(start[1] - end[1]);
-      if ((shape === "Arrow" ? Math.hypot(dx, dy) : Math.min(dx, dy)) < 2) return;
+      if (((shape === "Arrow" || shape === "Line") ? Math.hypot(dx, dy) : Math.min(dx, dy)) < 2) return;
       const paths = strokes(shape, start, end, viewport.scale).map(line =>
         line.map(([x, y]) => viewport.convertToPdfPoint(x, y) as Point));
       const xs = paths.flat().map(p => p[0]), ys = paths.flat().map(p => p[1]);

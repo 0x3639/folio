@@ -63,7 +63,7 @@ export function NotesPanel({ state, onExport, persisted, onReveal, onNote, onRem
       <div className="notes-head">
         <span>{highlights.length ? `${highlights.length} highlight${highlights.length === 1 ? "" : "s"}` : "Notes"}</span>
         <MoreMenu label="Export" items={[
-          { kind: "action", icon: "copy", label: "Copy Markdown", disabled: !state.marks.length && !docNote.value.trim() && !state.bookmarkedPages?.length,
+          { kind: "action", icon: "copy", label: "Copy Markdown", disabled: !state.drawing?.measurements.length && !state.marks.length && !docNote.value.trim() && !state.bookmarkedPages?.length,
             onSelect: () => onExport("markdown") },
           { kind: "action", icon: "download", label: "Save JSON…", disabled: state.bookmarkedPages === null, onSelect: () => onExport("json") },
         ]} />

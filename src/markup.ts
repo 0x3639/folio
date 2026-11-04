@@ -1,3 +1,4 @@
+import { emptyDrawing, type DrawingData } from "./measurements";
 // Highlights, drawings, text boxes and notes as first-class, auto-saved document data.
 // pdf.js owns the on-page editors; this keeps a saved copy per document and recreates the
 // editors whenever the document is opened again.
@@ -55,6 +56,8 @@ const toHex = (color: unknown) =>
 const newId = () => crypto.randomUUID();
 
 export interface MarkupState {
+  drawing?: DrawingData;
+  pdfMarks?: Mark[];
   marks: Mark[];
   note: string;
   bookmarkedPages: number[] | null;
@@ -68,6 +71,11 @@ export class MarkupController {
   #generation = 0;
   #persist = false;
   #note = "";
+  #drawing: DrawingData = emptyDrawing();
+  #pdfMarks: Mark[] = [];
+  #pdfMarksLoaded = false;
+  #drawingPast: DrawingData[] = [];
+  #drawingFuture: DrawingData[] = [];
   #bookmarkedPages: number[] | null = null;
   /** Saved marks whose page hasn't rendered yet, keyed by page index. */
   #pending = new Map<number, Mark[]>();
@@ -113,7 +121,7 @@ export class MarkupController {
   }
 
   get state(): MarkupState {
-    return { marks: this.#sorted(), note: this.#note, bookmarkedPages: this.#bookmarkedPages };
+    return { pdfMarks: this.#pdfMarks, drawing: this.#drawing, marks: this.#sorted(), note: this.#note, bookmarkedPages: this.#bookmarkedPages };
   }
 
   clearEditorSelection() {
@@ -121,13 +129,14 @@ export class MarkupController {
   }
 
   /** Loads saved markup for a newly opened document. Password-protected documents aren't persisted. */
-  async load(docId: string, persist: boolean, reading?: Pick<MarkupState, "note" | "bookmarkedPages">) {
+  async load(docId: string, persist: boolean, reading?: Pick<MarkupState, "note" | "bookmarkedPages">, importedDrawing?: DrawingData) {
     this.unload();
     const generation = this.#generation;
     this.#docId = docId;
     const saved = persist ? await getNotes(docId) : undefined;
     if (generation !== this.#generation) return;
     this.#persist = persist;
+    this.#drawing = saved?.drawing ?? importedDrawing ?? emptyDrawing();
     this.#note = reading?.note ?? saved?.note ?? "";
     this.#bookmarkedPages = reading?.bookmarkedPages ?? saved?.bookmarkedPages ?? [];
     for (const mark of saved?.marks ?? []) {
@@ -159,6 +168,9 @@ export class MarkupController {
     this.#pending.clear();
     this.#known.clear();
     this.#note = "";
+    this.#drawing = emptyDrawing();
+    this.#drawingPast = []; this.#drawingFuture = [];
+    this.#pdfMarks = []; this.#pdfMarksLoaded = false;
     this.#bookmarkedPages = null;
     this.#emit();
   }
@@ -189,6 +201,7 @@ export class MarkupController {
         editor.__folioShape = mark.shape;
         if (textBox) editor.isClone = true;
         layer.add(editor);
+        if (editor.div) editor.div.inert = !!this.#drawing.reviewMeta?.[mark.id]?.locked;
         // An empty editor would be thrown away by pdf.js (and its mark with it) at the next tool change.
         if (editor.isEmpty()) {
           editor.remove();
@@ -337,7 +350,7 @@ export class MarkupController {
   flush() {
     window.clearTimeout(this.#saveTimer);
     if (!this.#persist || !this.#docId) return;
-    const notes: DocNotes = { id: this.#docId, note: this.#note, marks: [...this.#known.values()],
+    const notes: DocNotes = { drawing: this.#drawing, id: this.#docId, note: this.#note, marks: [...this.#known.values()],
       bookmarkedPages: this.#bookmarkedPages ?? [], updatedAt: Date.now() };
     return saveNotes(notes);
   }
@@ -472,6 +485,75 @@ export class MarkupController {
     this.#emit();
     this.#scheduleSave();
     if (editor) this.scheduleSync();
+  }
+
+  async loadPdfMarks(pdf: PDFDocumentProxy) {
+    if (this.#pdfMarksLoaded) return;
+    this.#pdfMarksLoaded = true;
+    const generation = this.#generation;
+    for (let page = 0; page < pdf.numPages; page++) {
+      const annotations = await (await pdf.getPage(page + 1)).getAnnotations();
+      if (generation !== this.#generation) return;
+      for (const annotation of annotations) {
+        if (['Link', 'Widget', 'Popup'].includes(annotation.subtype) || annotation.inReplyTo) continue;
+        this.#pdfMarks.push({ id: `pdf:${page}:${annotation.id}`, type: 'freetext', page, text: annotation.contentsObj?.str || annotation.titleObj?.str || annotation.subtype,
+          note: '', color: toHex(Array.from(annotation.color ?? [])), createdAt: 0,
+          data: { rect: annotation.rect, external: true, subtype: annotation.subtype } });
+      }
+      this.#emit();
+    }
+  }
+
+  setDrawing(drawing: DrawingData) {
+    this.#drawingPast = [...this.#drawingPast.slice(-99), this.#drawing];
+    this.#drawingFuture = [];
+    this.#drawing = drawing;
+    for (const editor of this.#liveEditors()) if (editor.div) editor.div.inert = !!drawing.reviewMeta?.[editor.__folioMark ?? '']?.locked;
+    this.#ui?.unselectAll();
+    this.#emit();
+    this.#scheduleSave();
+  }
+
+  undoDrawing(redo = false) {
+    const from = redo ? this.#drawingFuture : this.#drawingPast;
+    const next = from.pop(); if (!next) return;
+    (redo ? this.#drawingPast : this.#drawingFuture).push(this.#drawing);
+    this.#drawing = next;
+    for (const editor of this.#liveEditors()) if (editor.div) editor.div.inert = !!next.reviewMeta?.[editor.__folioMark ?? '']?.locked;
+    this.#emit(); this.#scheduleSave();
+  }
+
+  async styleMark(id: string, style: Partial<import('./reviewModel').ReviewStyle>) {
+    const mark = this.#known.get(id); if (!mark || this.#drawing.reviewMeta?.[id]?.locked) return;
+    await this.#restorePage(mark.page);
+    const editor = this.#editorFor(id) as (Editor & { updateParams?: (type: number, value: string | number) => void }) | undefined;
+    if (!editor?.updateParams) return;
+    const p = AnnotationEditorParamsType;
+    if (style.color) editor.updateParams(mark.type === 'ink' ? p.INK_COLOR : mark.type === 'freetext' ? p.FREETEXT_COLOR : p.HIGHLIGHT_COLOR, style.color);
+    if (mark.type === 'ink') {
+      if (style.width !== undefined) editor.updateParams(p.INK_THICKNESS, style.width);
+      if (style.opacity !== undefined) editor.updateParams(p.INK_OPACITY, style.opacity * 100);
+    }
+    if (mark.type === 'freetext' && style.fontSize !== undefined) editor.updateParams(p.FREETEXT_SIZE, style.fontSize);
+    this.sync();
+  }
+
+  async moveMark(id: string, dx: number, dy: number, duplicate = false) {
+    const mark = this.#known.get(id); if (!mark || this.#drawing.reviewMeta?.[id]?.locked) return;
+    await this.#restorePage(mark.page);
+    const layer = this.#ui?.getLayer(mark.page);
+    let editor = this.#editorFor(id);
+    if (!layer || !editor) return;
+    if (duplicate) {
+      const copy = await layer.deserialize({ ...mark.data, isCopy: mark.type === 'freetext', annotationElementId: null });
+      if (!copy || this.#ui?.getLayer(mark.page) !== layer) return;
+      copy.isClone = true; copy.__folioShape = mark.shape; copy.__folioText = mark.text;
+      layer.add(copy); editor = copy;
+      if (mark.note) this.#setEditorNote(editor, mark.note);
+    }
+    const rect = mark.data.rect as number[];
+    this.#moveTo(editor, [rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy]);
+    this.sync();
   }
 
   setDocNote(note: string) {

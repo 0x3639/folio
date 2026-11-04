@@ -1,3 +1,9 @@
+import { Measurements } from "./DrawingMeasurements";
+import { emptyDrawing } from "./measurements";
+import { ReviewWorkspace } from "./ReviewWorkspace";
+import { RevisionCompare } from "./RevisionCompare";
+import { reviewRows, reviewCsv } from "./reviewModel";
+import { measurementLabel } from "./measurements";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   EventBus,
@@ -170,6 +176,9 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
     try { return localStorage.getItem("folio:night") === "1"; }
     catch { return false; }
   });
+  const [reviewing, setReviewing] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
   const [tool, setTool] = useState<Tool>("select");
   const [drawTool, setDrawTool] = useState<"Pen" | Shape>("Pen");
   const [colors, setColors] = useState<Partial<Record<Tool, string>>>({
@@ -360,8 +369,20 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
       setError(null);
       let unattached: PDFDocumentProxy | undefined;
       try {
-        const pdf = await loadPdf(data, signal, password);
+        let pdf = await loadPdf(data, signal, password);
         unattached = pdf;
+        let importedDrawing: import('./measurements').DrawingData | undefined;
+        if (!password && !(await pdf.getSignatures())?.length) {
+          const { importDrawingPdf } = await import('./drawingPdf');
+          const imported = await importDrawingPdf(data).catch(() => ({ bytes: data, drawing: undefined }));
+          signal.throwIfAborted();
+          if (imported.drawing) {
+            importedDrawing = imported.drawing;
+            await pdf.loadingTask.destroy();
+            pdf = await loadPdf(imported.bytes, signal);
+            unattached = pdf;
+          }
+        }
         const id = await contentKey(data);
         signal.throwIfAborted();
         const existing = revision ? undefined : await getRecent(id);
@@ -395,7 +416,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
           reading.bookmarkedPages = exportedOrder.flatMap((n, i) => bookmarks.has(n) ? [i + 1] : []);
         }
         persistRef.current = !password && !revision;
-        void markupRef.current!.load(id, persistRef.current, reading);
+        void markupRef.current!.load(id, persistRef.current, reading, importedDrawing);
         setNoteBox(null);
         setPinned(null);
         setAiContext(null);
@@ -421,6 +442,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
         setPageInput(String(lastPageRef.current));
         setRotation(revision ? saved?.rotation ?? 0 : 0);
         setDirty(false);
+        setMeasuring(false); setReviewing(false); setComparing(false);
         setTool("select");
         setPending(null);
         setSearchOpen(false);
@@ -601,6 +623,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
       }
       nextSelection.current = null;
       setPinned(null);
+      setMeasuring(false); setReviewing(false);
       setTool(next); setContentEditing(editContent); return true;
     } catch { flash("Annotations aren’t supported for this document"); return false; }
   };
@@ -785,7 +808,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
     return () => window.removeEventListener("pagehide", flush);
   }, []);
 
-  const currentBytes = async (doc = docRef.current, order = pageOrder) => {
+  const currentBytes = async (doc = docRef.current, order = pageOrder, flatten = false) => {
     if (!doc || exporting.current === doc.pdf) return null;
     exporting.current = doc.pdf;
     const signal = opening.current!.signal;
@@ -800,9 +823,12 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
         storage.setValue(key, data);
         keys.push(key);
       }
-      const annotated = storage.size > 0;
-      if (order?.length) return { bytes: await reorderPdf(doc.pdf, order, signal, doc.password), annotated };
-      return { bytes: annotated ? await doc.pdf.saveDocument() : await doc.pdf.getData(), annotated };
+      const drawing = markupRef.current!.state.drawing ?? emptyDrawing();
+      const annotated = storage.size > 0 || drawing.measurements.length > 0 || !!drawing.review?.length;
+      const bytes = order?.length ? await reorderPdf(doc.pdf, order, signal, doc.password)
+        : storage.size > 0 ? await doc.pdf.saveDocument() : await doc.pdf.getData();
+      const { exportDrawingPdf } = await import('./drawingPdf');
+      return { bytes: await exportDrawingPdf(bytes, drawing, order, flatten, undefined, markupRef.current!.state.marks), annotated };
     } finally {
       for (const key of keys) storage.remove(key);
       if (exporting.current === doc.pdf) exporting.current = null;
@@ -861,7 +887,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
         setPageDraft(draft => draft?.order === pageOrder ? { order: pageOrder, copy: copy.bytes } : draft);
         flash("Downloading reordered copy");
       } else {
-        flash(copy.annotated ? "Saved a copy with your highlights and notes" : "Download started");
+        flash(copy.annotated ? "Saved a copy with your annotations" : "Download started");
       }
       if (historyMessage) flash(historyMessage);
     } catch {
@@ -1210,9 +1236,9 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
               {TOOLS.map((t) => (
                 <button
                   key={t.id}
-                  className={!contentEditing && tool === t.id ? "on" : ""}
+                  className={!contentEditing && !measuring && !reviewing && tool === t.id ? "on" : ""}
                   aria-label={t.label}
-                  aria-pressed={!contentEditing && tool === t.id}
+                  aria-pressed={!contentEditing && !measuring && !reviewing && tool === t.id}
                   onClick={() => chooseTool(t.id)}
                   title={`${t.id === "highlight" ? "Automatically highlight selected text" : t.label} (${t.key})`}
                 >
@@ -1220,6 +1246,18 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
                   <span>{t.label}</span>
                 </button>
               ))}
+              <button aria-label="Measure" aria-pressed={measuring} className={measuring ? "on" : ""} onClick={async () => {
+                if (!doc || doc.password || await doc.pdf.getPermissions() || (await doc.pdf.getSignatures())?.length) {
+                  flash("Measurements require an unsigned, unencrypted PDF."); return;
+                }
+                if (await chooseTool("select")) setMeasuring(true);
+              }}>Measure</button>
+              <button aria-label="Review" aria-pressed={reviewing} className={reviewing ? 'on' : ''} onClick={async () => {
+                try {
+                  if (!doc || doc.password || await doc.pdf.getPermissions() || (await doc.pdf.getSignatures())?.length) { flash('Drawing review requires an unsigned, unencrypted PDF.'); return; }
+                  if (await chooseTool('select')) setReviewing(true);
+                } catch { flash('Could not open drawing review for this document.'); }
+              }}>Review</button>
               <button onClick={startSigning} aria-label="Sign" title="Add a signature"><Icon name="signature" size={16} /><span>Sign</span></button>
               <button className={contentEditing ? "on edit-mode-toggle" : "edit-mode-toggle"} aria-pressed={contentEditing}
                 aria-label={contentEditing ? "Exit edit mode" : "Edit mode"} title={contentEditing ? "Exit edit mode" : "Edit existing text and images"}
@@ -1307,6 +1345,24 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
             }}>
             <div ref={innerRef} className="pdfViewer" />
           </div>
+          {doc && viewerRef.current && busRef.current && <Measurements key={doc.id} viewer={viewerRef.current} bus={busRef.current}
+            active={measuring && !contentEditing} page={page} data={markup.drawing}
+            onChange={drawing => { markupRef.current!.setDrawing(drawing); if (!persistRef.current) setDirty(true); }} onClose={() => setMeasuring(false)} />}
+          {doc && viewerRef.current && busRef.current && markupRef.current && <ReviewWorkspace key={doc.id} viewer={viewerRef.current} bus={busRef.current} state={markup} controller={markupRef.current}
+            active={reviewing && !contentEditing} onClose={() => setReviewing(false)} onCompare={() => setComparing(true)}
+            onExport={async format => {
+              const rows = reviewRows(markupRef.current!.state.drawing ?? emptyDrawing(), [...markupRef.current!.state.marks, ...(markupRef.current!.state.pdfMarks ?? [])], measurementLabel);
+              try { if (format === 'csv') saveBlob(new Blob([reviewCsv(rows)], { type: 'text/csv;charset=utf-8' }), doc.name.replace(/\.pdf$/i, '') + '-review.csv');
+                else saveBlob(pdfBlob(await (await import('./drawingPdf')).reviewReport(rows, 'Drawing review — ' + doc.name)), doc.name.replace(/\.pdf$/i, '') + '-review.pdf');
+              } catch (e) { flash(e instanceof Error ? e.message : 'Could not export the review report.'); }
+            }} onFlatten={async () => {
+              if (!window.confirm('Save a final PDF copy with fixed marks? The copy will not retain editable annotations. Your working document stays editable.')) return;
+              try { const copy = await currentBytes(doc, pageOrder, true); if (copy) saveBlob(pdfBlob(copy.bytes), doc.name.replace(/\.pdf$/i, '') + '-review-final.pdf'); }
+              catch (e) { flash(e instanceof Error ? e.message : 'Could not flatten this PDF.'); }
+            }} />}
+          {comparing && doc && <RevisionCompare initialPage={page} onClose={() => setComparing(false)} snapshot={async () => {
+            const copy = await currentBytes(doc, []); if (!copy) throw new Error('The document is busy. Try again.'); return copy.bytes;
+          }} />}
           {contentEditing && doc && <ContentEditor key={doc.pdf.loadingTask.docId} ref={contentRef} nextSelection={nextSelection} pdf={doc.pdf} viewer={viewerRef.current!} bus={busRef.current!}
             onDirty={setEditorDirty} snapshot={async () => {
               if (doc.password || await doc.pdf.getPermissions() || (await doc.pdf.getSignatures())?.length) throw new Error("Editing requires an unsigned, unencrypted PDF.");
@@ -1330,7 +1386,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
               {tool === "ink" && (
                 <select className="draw-tool" aria-label="Drawing tool" value={drawTool}
                   onChange={e => setDrawTool(e.target.value as typeof drawTool)}>
-                  {["Pen", "Rectangle", "Oval", "Arrow"].map(name => <option key={name}>{name}</option>)}
+                  {["Pen", "Line", "Rectangle", "Oval", "Arrow", "Cloud"].map(name => <option key={name}>{name}</option>)}
                 </select>
               )}
               <div className="color-options" role="radiogroup" aria-label="Color">

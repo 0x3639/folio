@@ -190,6 +190,7 @@ export interface StoredMark {
 }
 
 export interface DocNotes {
+  drawing?: import("./measurements").DrawingData;
   id: string;
   note: string;
   marks: StoredMark[];

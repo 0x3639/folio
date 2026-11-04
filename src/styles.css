@@ -1635,3 +1635,61 @@ kbd {
 @media (max-width: 760px) {
   .version-panel { position: absolute; inset: 0 0 0 auto; width: min(340px, 92%); z-index: 12; box-shadow: var(--shadow-md); }
 }
+
+.measurement-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; overflow: hidden; }
+.measurement-overlay.measuring { pointer-events: auto; cursor: crosshair; touch-action: none; }
+.measurement-overlay polyline, .measurement-overlay circle { fill: none; stroke: #2f6fed; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.measurement-overlay text { fill: #2f6fed; stroke: white; stroke-width: 3; paint-order: stroke; font: 14px sans-serif; }
+.measurement-draft { opacity: .65; }
+.measurement-panel { position: absolute; top: 16px; right: 16px; z-index: 10; width: 290px; max-height: calc(100% - 100px); overflow: auto; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 6px 24px #0002; font-size: 13px; }
+.measurement-panel header, .measurement-panel li, .measurement-actions, .measurement-calibration { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.measurement-panel header { margin-bottom: 16px; }
+.measurement-panel label { display: block; margin-bottom: 8px; }
+.measurement-panel input { width: 100px; }
+.measurement-panel button, .measurement-panel select, .measurement-panel input { padding: 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text); font: inherit; }
+.measurement-panel button:disabled { opacity: .4; }
+.measurement-panel ul { list-style: none; padding: 0; }
+.measurement-panel li { margin-bottom: 6px; }
+.measurement-panel p, .measurement-panel small { line-height: 1.5; }
+
+.review-overlay { position: absolute; pointer-events: none; z-index: 7; overflow: hidden; }
+.review-overlay.review-active { pointer-events: auto; touch-action: none; }
+.review-overlay [data-review-id] { cursor: move; }
+.review-overlay .review-selection-box { fill: none; stroke: #2488ff; stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
+.review-overlay .review-vertex { fill: white; stroke: #2488ff; stroke-width: 2; cursor: crosshair; }
+.review-panel { position: absolute; top: 12px; right: 12px; width: min(370px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; z-index: 12; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 8px 32px #0003; font-size: 12px; }
+.review-panel header, .compare-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+.review-panel label { display: block; margin: 8px 0; }
+.review-panel input:not([type=checkbox]):not([type=color]):not([type=range]), .review-panel select, .review-panel textarea { width: 100%; }
+.review-panel textarea { min-height: 65px; resize: vertical; }
+.review-panel button, .review-panel input, .review-panel select, .review-panel textarea, .compare-dialog button, .compare-dialog input, .compare-dialog select { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 5px; padding: 5px 7px; font: inherit; }
+.review-panel button:disabled { opacity: .4; cursor: default; }
+.review-fields, .review-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.review-fields > label { flex: 1; min-width: 70px; }
+.review-panel details { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+.review-panel summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+.review-panel fieldset { border: 0; padding: 0; margin: 0; }
+.review-hint { line-height: 1.5; color: var(--muted); }
+.review-list, .review-replies { list-style: none; padding: 0; max-height: 260px; overflow: auto; }
+.review-list li { display: flex; align-items: center; gap: 8px; border-radius: 5px; margin-bottom: 5px; }
+.review-list li.selected { outline: 2px solid #2f6fed; }
+.review-list button { flex: 1; text-align: left; min-width: 0; }
+.review-list span, .review-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; }
+.review-replies li { border-bottom: 1px solid var(--border); padding: 8px 0; }
+.compare-backdrop { position: fixed; inset: 0; z-index: 1000; background: #0008; padding: 18px; }
+.compare-dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 16px; height: 100%; display: flex; flex-direction: column; }
+.compare-dialog h2 { font-size: 18px; margin: 0; }
+.compare-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; }
+.compare-controls input[type=number] { width: 60px; }
+.compare-controls input[type=file] { max-width: 220px; }
+.compare-dialog p { font-size: 12px; }
+.compare-panes { display: flex; flex: 1; min-height: 0; gap: 12px; }
+.compare-pane { flex: 1; position: relative; overflow: hidden; background: white; cursor: grab; touch-action: none; border: 1px solid var(--border); }
+.compare-image-space { position: absolute; transform-origin: 0 0; }
+.compare-image-space img { position: absolute; top: 0; left: 0; transform-origin: 0 0; max-width: none; user-select: none; pointer-events: none; }
+.compare-reference { position: absolute; border: 2px solid #ff9700; border-radius: 50%; color: #ff9700; width: 24px; height: 24px; transform: translate(-50%, -50%); text-align: center; background: white; }
+
+.review-fields > label { flex: 1 1 85px; min-width: 0; max-width: 100%; }
+.review-panel input[type=range] { width: 100%; }
+.review-panel *, .compare-dialog * { box-sizing: border-box; }
+.review-panel { overflow-x: hidden; }

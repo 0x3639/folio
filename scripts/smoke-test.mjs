@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { readerPage } from "./reader-page.mjs";
+import { checkMeasurements } from "./smoke-measurements.mjs";
 import { checkReaderTools } from "./smoke-reader-tools.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -139,6 +140,8 @@ try {
   console.log("ok  a sidebar bookmark persists on its own and toggling it leaves the current page in place");
   console.log("ok  Bookmarked filters the sidebar, jumps to the original page, and updates as bookmarks are removed");
 
+  await checkMeasurements(page);
+
   // A signature is an unsaved edit that must survive a tab switch.
   const photo = await page.evaluate(() => {
     const canvas = Object.assign(document.createElement("canvas"), { width: 600, height: 200 });
@@ -160,6 +163,7 @@ try {
   await page.locator('[aria-label^="Place signature on page"]').click();
   await page.getByRole("button", { name: /Approve and add signature/ }).click();
   await page.locator(".dirty-dot").waitFor();
+  await page.getByRole("button", { name: /Approve and add signature/ }).waitFor({ state: "detached" });
 
   // Printing saves nothing, so the signature stays marked as unsaved. The print frame is stubbed for the check, so no
   // system print dialog opens.
@@ -290,7 +294,7 @@ try {
   const inkPage = page.locator('.page[data-page-number="1"]');
   await inkPage.locator(".annotationEditorLayer.inkEditing").waitFor();
   await page.getByRole("radio", { name: "Blue" }).click();
-  for (const [index, shape] of ["Rectangle", "Oval", "Arrow"].entries()) {
+  for (const [index, shape] of ["Rectangle", "Oval", "Arrow", "Line", "Cloud"].entries()) {
     if (index === 1) {
       await page.getByTitle("Rotate (R)").click();
       await inkPage.locator('.annotationEditorLayer.inkEditing[data-main-rotation="90"]').waitFor();
@@ -332,12 +336,12 @@ try {
       `${shape} should appear where it was drawn`);
   }
   await page.getByTitle(/Undo \(/).click();
-  await page.waitForFunction(() => document.querySelectorAll(".inkEditor").length === 2);
+  await page.waitForFunction(() => document.querySelectorAll(".inkEditor").length === 4);
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.keyboard.press("ControlOrMeta+Shift+z");
-  await inkPage.locator(".inkEditor").nth(2).waitFor({ state: "attached" });
+  await inkPage.locator(".inkEditor").nth(4).waitFor({ state: "attached" });
   for (let i = 0; i < 3; i++) await page.getByTitle("Rotate (R)").click();
-  console.log("ok  Draw creates the three shapes and supports undo and redo");
+  console.log("ok  Draw creates the five shapes and supports undo and redo");
 
   // Select a sentence and highlight it in one click.
   await dragAcross(page.locator('.page[data-page-number="1"] .textLayer').getByText(/A short tour of Folio/));
@@ -422,7 +426,11 @@ try {
   }, copy);
   await page.keyboard.press("ControlOrMeta+s");
   assert.equal(await app.evaluate(() => globalThis.folioCopySaved), "completed");
-  assert.equal(readFileSync(copy, "latin1").match(/\/Subtype\s*\/Highlight\b/g)?.length, 4);
+  const { PDFDocument, PDFName } = require('pdf-lib');
+  const parsedCopy = await PDFDocument.load(readFileSync(copy));
+  const highlightCount = parsedCopy.getPages().flatMap(p => p.node.Annots()?.asArray() ?? [])
+    .filter(ref => parsedCopy.context.lookup(ref).get(PDFName.of('Subtype'))?.toString() === '/Highlight').length;
+  assert.equal(highlightCount, 4);
   const savedInk = await page.evaluate(async bytes => {
     const task = pdfjsLib.getDocument({ data: Uint8Array.from(bytes) });
     try {
@@ -431,9 +439,9 @@ try {
       return annotations.filter(a => a.subtype === "Ink").map(a => ({ color: Array.from(a.color), paths: a.inkLists.length }));
     } finally { await task.destroy(); }
   }, Array.from(readFileSync(copy)));
-  assert.deepEqual(savedInk.map(a => a.paths).sort(), [1, 3, 4]);
+  assert.deepEqual(savedInk.map(a => a.paths).sort(), [1, 1, 1, 3, 4]);
   assert.ok(savedInk.every(a => String(a.color) === "47,111,237"));
-  console.log("ok  all three shapes survive reopening and are embedded in the saved PDF");
+  console.log("ok  all five shapes survive reopening and are embedded in the saved PDF");
   console.log("ok  saved copy includes marks on pages not drawn yet");
 
   if (await sidebarToggle.getAttribute("aria-pressed") !== "true") await sidebarToggle.click();
@@ -464,7 +472,7 @@ try {
   assert.equal(new Set(exported.annotations.map(a => a.id)).size, exported.annotations.length);
   assert.ok(exported.annotations.some(a => a.type === "highlight" && a.page === lastPage && a.quadPoints.length >= 8));
   const shapes = exported.annotations.filter(a => a.type === "shape");
-  assert.deepEqual(shapes.map(a => a.shape).sort(), ["arrow", "oval", "rectangle"]);
+  assert.deepEqual(shapes.map(a => a.shape).sort(), ["arrow", "cloud", "line", "oval", "rectangle"]);
   assert.ok(shapes.every(a => a.page === 1 && a.color.toLowerCase() === "#2f6fed" && a.strokes[0].every(Number.isFinite)));
   await page.evaluate(() => {
     window.folioOriginalClipboard = Object.getOwnPropertyDescriptor(navigator.clipboard, "writeText");
@@ -726,5 +734,6 @@ try {
   assert.deepEqual(failures, []);
   console.log(`PASS (${process.platform})`);
 } finally {
-  await app.close();
+  // A failed off-screen test cannot answer an unsaved-changes prompt.
+  await app.evaluate(({ app }) => app.exit(0));
 }
