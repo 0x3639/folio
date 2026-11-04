@@ -38,7 +38,8 @@ jobs:
             os: windows-latest
             target: win
           - platform: macos
-            os: macos-latest
+            # Avoid the constrained arm64 runner pool; packaging still targets universal.
+            os: macos-15-intel
             target: mac
           - platform: linux
             os: ubuntu-latest
