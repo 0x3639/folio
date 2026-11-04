@@ -177,6 +177,9 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
     try { return localStorage.getItem("folio:night") === "1"; }
     catch { return false; }
   });
+  const [drawingToolbar, setDrawingToolbar] = useState(false);
+  const [measureRequest, setMeasureRequest] = useState<{ tool: import("./ReviewToolbar").MeasureTool; sequence: number }>();
+  const [measureTool, setMeasureTool] = useState<import("./ReviewToolbar").MeasureTool>("Calibrate");
   const [reviewing, setReviewing] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [carrying, setCarrying] = useState(false);
@@ -444,7 +447,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
         setPageInput(String(lastPageRef.current));
         setRotation(revision ? saved?.rotation ?? 0 : 0);
         setDirty(false);
-        setMeasuring(false); setReviewing(false); setComparing(false); setCarrying(false);
+        setMeasuring(false); setReviewing(false); setDrawingToolbar(false); setComparing(false); setCarrying(false);
         setTool("select");
         setPending(null);
         setSearchOpen(false);
@@ -1254,12 +1257,12 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
                 }
                 if (await chooseTool("select")) setMeasuring(true);
               }}>Measure</button>
-              <button aria-label="Review" aria-pressed={reviewing} className={reviewing ? 'on' : ''} onClick={async () => {
+              <button aria-label="Markup" title="Drawing markup and review tools" aria-pressed={drawingToolbar} className={reviewing ? 'on' : ''} onClick={async () => {
                 try {
                   if (!doc || doc.password || await doc.pdf.getPermissions() || (await doc.pdf.getSignatures())?.length) { flash('Drawing review requires an unsigned, unencrypted PDF.'); return; }
-                  if (await chooseTool('select')) setReviewing(true);
+                  if (await chooseTool('select')) { setReviewing(true); setDrawingToolbar(true); }
                 } catch { flash('Could not open drawing review for this document.'); }
-              }}>Review</button>
+              }}><Icon name="callout" size={16} />Markup</button>
               <button onClick={startSigning} aria-label="Sign" title="Add a signature"><Icon name="signature" size={16} /><span>Sign</span></button>
               <button className={contentEditing ? "on edit-mode-toggle" : "edit-mode-toggle"} aria-pressed={contentEditing}
                 aria-label={contentEditing ? "Exit edit mode" : "Edit mode"} title={contentEditing ? "Exit edit mode" : "Edit existing text and images"}
@@ -1348,10 +1351,14 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
             <div ref={innerRef} className="pdfViewer" />
           </div>
           {doc && viewerRef.current && busRef.current && <Measurements key={doc.id} viewer={viewerRef.current} bus={busRef.current}
-            active={measuring && !contentEditing} page={page} data={markup.drawing}
+            active={measuring && !contentEditing} page={page} requestedTool={measureRequest} onModeChange={setMeasureTool} data={markup.drawing}
             onChange={drawing => { markupRef.current!.setDrawing(drawing); if (!persistRef.current) setDirty(true); }} onClose={() => setMeasuring(false)} />}
           {doc && viewerRef.current && busRef.current && markupRef.current && <ReviewWorkspace key={doc.id} viewer={viewerRef.current} bus={busRef.current} state={markup} controller={markupRef.current}
-            active={reviewing && !contentEditing} onClose={() => setReviewing(false)} onCompare={() => setComparing(true)} onCarry={() => setCarrying(true)}
+            active={reviewing && !contentEditing} toolbarVisible={drawingToolbar && !contentEditing} otherTool={measuring ? measureTool : tool === 'select' ? 'Select' : tool}
+            onActivate={async () => { if (!await chooseTool('select')) return false; setReviewing(true); return true; }}
+            onMeasure={async mode => { if (await chooseTool('select')) { setMeasureRequest(r => ({ tool: mode, sequence: (r?.sequence ?? 0) + 1 })); setMeasuring(true); } }}
+            onNative={next => { if (next === 'sign') void startSigning(); else { if (next === 'ink') setDrawTool('Pen'); void chooseTool(next); } }} onSave={download}
+            onClose={() => { setDrawingToolbar(false); setReviewing(false); setMeasuring(false); void chooseTool('select'); }} onCompare={() => setComparing(true)} onCarry={() => setCarrying(true)}
             onExport={async format => {
               const rows = reviewRows(markupRef.current!.state.drawing ?? emptyDrawing(), [...markupRef.current!.state.marks, ...(markupRef.current!.state.pdfMarks ?? [])], measurementLabel);
               try { if (format === 'csv') saveBlob(new Blob([reviewCsv(rows)], { type: 'text/csv;charset=utf-8' }), doc.name.replace(/\.pdf$/i, '') + '-review.csv');

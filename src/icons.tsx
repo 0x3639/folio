@@ -1,4 +1,13 @@
 const paths = {
+  arrow: <path d="M4 20 20 4M9 4h11v11" />,
+  callout: <><path d="M9 4h12v10H9zM9 11 3 20l9-6M12 7h6M12 10h4" /></>,
+  cloud: <path d="M5 7C2 3 10 1 11 5c3-5 10-1 7 3 6 0 5 8 1 8 2 5-5 7-7 3-3 5-9 1-7-2-6 0-5-8 0-10Z" />,
+  rectangle: <rect x="3" y="5" width="18" height="14" rx="1" />,
+  oval: <ellipse cx="12" cy="12" rx="9" ry="7" />,
+  polygon: <path d="m4 7 9-4 8 8-5 10-12-4Z" />,
+  line: <path d="m4 20 16-16" />,
+  ruler: <><path d="m3 16 13-13 5 5L8 21ZM12 7l3 3M8 11l3 3M5 14l3 3" /></>,
+  stamp: <><path d="M9 12V7a3 3 0 0 1 6 0v5l5 3v4H4v-4ZM4 22h16" /></>,
   bookmark: <path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4z" />,
   history: <><path d="M3 5v5h5M3.5 10A8.5 8.5 0 1 1 4 16" /><path d="M12 7v5l3 2" /></>,
   edit: <><path d="m13.5 6.5 4 4M4 20l4.5-1 12-12a2.8 2.8 0 0 0-4-4l-12 12Z" /></>,

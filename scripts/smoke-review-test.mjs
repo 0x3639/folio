@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readerPage } from './reader-page.mjs';
+import { checkMarkupToolbar } from './smoke-markup-toolbar.mjs';
 import { checkDrawingReview } from './smoke-drawing-review.mjs';
 const root = path.resolve(import.meta.dirname, '..'), output = path.join(root, 'release', 'smoke');
 mkdirSync(output, { recursive: true });
@@ -19,6 +20,7 @@ try {
   await page.getByRole('button', { name: /Try a sample/ }).click();
   await page.locator('.textLayer span:not(.markedContent)').first().waitFor();
   await checkDrawingReview(app, page, output);
+  await checkMarkupToolbar(app, page, output);
   assert.deepEqual(errors, []);
 } catch (error) {
   await page.screenshot({ path: path.join(output, 'review-failure.png') }).catch(() => {});

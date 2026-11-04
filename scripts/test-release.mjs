@@ -80,7 +80,7 @@ export async function runTestRelease(args) {
   writeFileSync(sums, [...digests].map(([name, hash]) => `${hash}  ${name}`).join('\n') + '\n');
   const notes = path.join(path.dirname(args[1]), 'test-release-notes.md');
   writeFileSync(notes, `Drawing review test build ${version}, from blue-beam at ${commit}.\n\n` +
-    `Includes calibrated measurements, drawing markups, review layers, revision comparison, and carrying comments onto matched revised sheets.\n\n` +
+    `Includes a movable drawing toolbar with Markup, Measure, and Review groups; click-to-place comments; drag-to-draw arrows and shapes; calibrated measurements; review layers; revision comparison; and carrying comments onto matched revised sheets.\n\n` +
     `This installs as **${TEST_PRODUCT}**, with separate app data. Automatic updates and the stable apt feed are disabled. This is a prerelease for manual testing.\n\n` +
     `## Downloads\n- Windows: Folio-Test-Setup.exe or Folio-Test-Portable.exe.\n- macOS (Apple Silicon and Intel): Folio-Test-mac.dmg.\n- Linux: Folio-Test-linux-x86_64.AppImage or Folio-Test-linux-amd64.deb.\n\n` +
     `These test builds are not Developer ID notarized or Windows publisher-signed. macOS may require System Settings → Privacy & Security → Open Anyway after the first launch attempt; Windows may show an unrecognized-app prompt.\n\n` +

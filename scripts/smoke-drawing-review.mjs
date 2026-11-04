@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 export async function checkDrawingReview(app, page, output) {
-  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('button', { name: 'Markup', exact: true }).click();
+  await page.getByRole('complementary', { name: 'Drawing tools' }).getByRole('button', { name: 'Properties', exact: true }).click();
+  await page.getByRole('button', { name: 'Collapse drawing toolbar', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Drawing review' });
   await panel.waitFor();
   await panel.getByLabel('Review tool', { exact: true }).selectOption('Callout');
@@ -100,7 +102,9 @@ export async function checkDrawingReview(app, page, output) {
   await page.evaluate(() => { window.confirm = window.originalReviewConfirm; });
   assert.equal((await PDFDocument.load(flat)).getPage(0).node.Annots()?.size() ?? 0, 0);
   await app.evaluate(({ BrowserWindow }, bytes) => BrowserWindow.getAllWindows()[0].webContents.send('folio:open-file', { name: 'review-editable.pdf', data: Buffer.from(bytes) }), Array.from(saved));
-  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('button', { name: 'Markup', exact: true }).click();
+  await page.getByRole('complementary', { name: 'Drawing tools' }).getByRole('button', { name: 'Properties', exact: true }).click();
+  await page.getByRole('button', { name: 'Collapse drawing toolbar', exact: true }).click();
   await panel.getByRole('checkbox', { name: 'Select Callout on sheet 1', exact: true }).nth(1).waitFor();
   await panel.getByLabel('Show layer Structural review', { exact: true }).waitFor();
   assert.equal(await panel.getByLabel('Show layer Structural review', { exact: true }).isChecked(), false);
@@ -135,7 +139,9 @@ export async function checkDrawingReview(app, page, output) {
   await transfer.getByText('4 marks carried forward; 0 duplicates skipped. Open the copy to verify placement, then save it.', { exact: true }).waitFor();
   await transfer.getByRole('button', { name: 'Open reviewed copy', exact: true }).click();
   await page.getByRole('tab', { name: 'drawing-revision-reviewed.pdf', selected: true, exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('button', { name: 'Markup', exact: true }).click();
+  await page.getByRole('complementary', { name: 'Drawing tools' }).getByRole('button', { name: 'Properties', exact: true }).click();
+  await page.getByRole('button', { name: 'Collapse drawing toolbar', exact: true }).click();
   await panel.locator('.review-list li').nth(3).waitFor();
   await panel.locator('.review-list button').first().click();
   await panel.getByText(/Carried from review-editable.pdf, sheet 1/).waitFor();

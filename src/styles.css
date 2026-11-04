@@ -1697,3 +1697,52 @@ kbd {
 .carry-dialog { max-width: 850px; margin: auto; height: auto; max-height: 100%; overflow: auto; gap: 14px; }
 .carry-sheet-list { overflow: auto; max-height: 45vh; display: grid; gap: 10px; }
 .carry-sheet-list label { display: flex; justify-content: space-between; align-items: center; gap: 15px; }
+
+/* Drawing tools stay separate from the sheet and its optional inspector. */
+.drawing-toolbar, .review-composer, .review-panel, .measurement-panel { font-family: var(--font); --border: var(--line); --muted: var(--text-2); }
+.drawing-toolbar { position: absolute; top: 12px; left: 12px; z-index: 13; width: 234px; max-width: calc(100% - 24px); max-height: calc(100% - 24px); overflow: auto; padding: 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); font-size: 12px; }
+.drawing-toolbar *, .review-composer * { box-sizing: border-box; }
+.drawing-toolbar button, .review-composer button { font: inherit; color: inherit; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
+.drawing-toolbar button:hover, .review-composer button:hover { background: var(--surface-2); border-color: var(--line-strong); }
+.drawing-toolbar button:focus-visible, .review-composer :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drawing-toolbar button[aria-pressed=true] { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
+.drawing-toolbar > header, .review-composer header { display: flex; align-items: center; gap: 5px; margin-bottom: 10px; }
+.drawing-toolbar > header strong { margin-right: auto; font-size: 13px; }
+.drawing-toolbar > header button { display: flex; padding: 5px; border-color: transparent; }
+.drawing-toolbar.is-collapsed > header { margin: 0; }
+.drawing-tool-tabs { display: flex; gap: 3px; padding-bottom: 9px; border-bottom: 1px solid var(--line); margin-bottom: 9px; }
+.drawing-tool-tabs button { flex: 1; padding-inline: 4px; }
+.drawing-tool-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.drawing-tool-grid button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-height: 61px; padding: 7px 3px; line-height: 1.25; font-size: 11px; }
+.drawing-review-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.drawing-quick-style, .drawing-tool-footer { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
+.drawing-quick-style label, .drawing-quick-style button { display: flex; align-items: center; gap: 6px; }
+.drawing-quick-style label { margin-right: auto; }
+.drawing-quick-style input { width: 29px; height: 26px; padding: 1px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.drawing-tool-instruction { margin-top: 10px; padding: 10px; background: var(--surface-2); border-radius: 7px; line-height: 1.45; }
+.drawing-tool-instruction p, .drawing-tool-intro { margin: 4px 0 0; color: var(--text-2); }
+.drawing-tool-intro { margin-bottom: 12px; }
+.drawing-tool-footer { flex-wrap: wrap; }
+.drawing-tool-footer button { display: flex; align-items: center; gap: 4px; padding: 5px; font-size: 11px; }
+.drawing-save { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; margin-top: 9px; }
+.drawing-tool-status { margin: 8px 0 0; color: var(--text-2); line-height: 1.4; }
+.drawing-tool-status:empty { display: none; }
+.review-panel-comments > .review-advanced, .review-panel-comments .review-advanced,
+.review-panel-comments > details[data-section]:not([data-section=comments]) { display: none; }
+.review-composer { position: absolute; right: 12px; top: 12px; z-index: 14; width: min(310px, calc(100% - 24px)); padding: 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); font-size: 13px; }
+.review-composer header { justify-content: space-between; }
+.review-composer header span, .review-composer small { color: var(--text-2); font-size: 11px; }
+.review-composer label { display: block; margin: 10px 0 6px; }
+.review-composer textarea { display: block; width: 100%; min-height: 110px; max-height: 40vh; resize: vertical; border: 1px solid var(--line-strong); border-radius: 6px; padding: 9px; background: var(--surface); color: var(--text); font: inherit; }
+.review-composer .review-actions { justify-content: flex-end; margin: 12px 0 8px; }
+.review-composer button.primary { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
+.review-composer button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 800px) {
+  .drawing-toolbar { width: 200px; }
+  .review-panel, .measurement-panel, .review-composer { width: min(310px, calc(100% - 236px)); }
+}
+.drawing-toolbar > header .drawing-toolbar-handle { margin-right: auto; padding-left: 0; cursor: grab; touch-action: none; }
+.drawing-toolbar > header .drawing-toolbar-handle:active { cursor: grabbing; }
+.review-panel > header { position: sticky; top: -16px; z-index: 1; background: var(--surface); padding: 10px 0; }
+.review-panel-layers > :not(header):not([data-section=layers]), .review-panel-tools > :not(header):not([data-section=tools]) { display: none; }
+.review-panel-comments > [data-section=comments] { margin-top: 16px; }

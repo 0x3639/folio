@@ -7,11 +7,18 @@ import { bounds, defaultStyle, markVisible, metaFor, movePoints, readToolPresets
 import { usePageOverlays } from './pageOverlays';
 import { drawingEndpoints, snapPoint } from './drawingSnap';
 import { keys } from './platform';
-interface Props { viewer: PDFViewer; bus: EventBus; state: MarkupState; controller: MarkupController; active: boolean; onClose: () => void; onExport: (format: 'csv' | 'pdf') => void; onCompare: () => void; onCarry: () => void; onFlatten: () => void }
-export function ReviewWorkspace({ viewer, bus, state, controller, active, onClose, onExport, onCompare, onCarry, onFlatten }: Props) {
+import { ReviewToolbar, type DrawingTool, type ReviewPanel, type MeasureTool } from './ReviewToolbar';
+interface Props { viewer: PDFViewer; bus: EventBus; state: MarkupState; controller: MarkupController; active: boolean; toolbarVisible: boolean; otherTool: string; onActivate: () => Promise<boolean>; onMeasure: (tool: MeasureTool) => void; onNative: (tool: 'highlight' | 'ink' | 'sign') => void; onSave: () => void; onClose: () => void; onExport: (format: 'csv' | 'pdf') => void; onCompare: () => void; onCarry: () => void; onFlatten: () => void }
+export function ReviewWorkspace({ viewer, bus, state, controller, active, toolbarVisible, otherTool, onActivate, onMeasure, onNative, onSave, onClose, onExport, onCompare, onCarry, onFlatten }: Props) {
   const data = state.drawing ?? emptyDrawing(), review = data.review ?? [], rows = reviewRows(data, [...state.marks, ...(state.pdfMarks ?? [])], measurementLabel);
   const overlays = usePageOverlays(viewer, bus);
-  const [tool, setTool] = useState<ReviewKind | 'Select'>('Select');
+  const [tool, setTool] = useState<DrawingTool>('Select');
+  const [panel, setPanel] = useState<ReviewPanel | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const [composer, setComposer] = useState<ReviewMark | null>(null);
+  const [commentText, setCommentText] = useState('');
+  const [hover, setHover] = useState<Point | null>(null);
+  const creation = useRef<{ page: number; start: Point; moved: boolean } | null>(null);
   const [style, setStyle] = useState<ReviewStyle>({ ...defaultStyle });
   const [note, setNote] = useState('');
   const [author, setAuthor] = useState(() => { try { return localStorage.getItem('folio:review-author') || ''; } catch { return ''; } });
@@ -43,8 +50,21 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
     void controller.loadPdfMarks(viewer.pdfDocument).catch(() => setMessage('Some PDF annotations could not be listed.'));
     void drawingEndpoints(viewer.pdfDocument, page).then(points => endpoints.current.set(page, points));
   }, [active, viewer, page]);
-  useEffect(() => { setDraft(null); setPreview(null); gesture.current = null; }, [tool, active]);
+  useEffect(() => { setDraft(null); setPreview(null); setHover(null); creation.current = null; gesture.current = null; if (!active) { setComposer(null); setPanel(null); } }, [tool, active]);
   useEffect(() => { setVertex(0); }, [selected.join(',')]);
+  useEffect(() => {
+    const section = panelRef.current?.querySelector<HTMLElement>(`[data-section="${panel}"]`);
+    if (section) { (section as HTMLDetailsElement).open = true; section.scrollIntoView({ block: 'nearest' }); }
+  }, [panel]);
+  const choose = async (next: DrawingTool) => {
+    if (!active && !await onActivate()) return;
+    setTool(next); if (next === 'Comment') setStyle(s => ({ ...s, color: '#333333', fill: '#fff4b8' })); setArmedPreset(null); setSelected([]); setNote(''); setMessage(''); setDraft(null); setComposer(null); setHover(null); setPanel(null);
+  };
+  const openPanel = async (next: ReviewPanel) => {
+    if (!active && !await onActivate()) return;
+    if (next === 'comments' || !active) setTool('Select');
+    setPanel(next);
+  };
   const change = (next: typeof data) => controller.setDrawing(next);
   const metadata = (patch: Partial<ReviewMeta>) => {
     change({ ...data, reviewMeta: { ...data.reviewMeta, ...Object.fromEntries(selected.map(id => [id, { ...metaFor(data, id), ...patch }])) } });
@@ -56,6 +76,7 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
     chosen.filter(r => r.source === 'annotation').forEach(r => { void controller.styleMark(r.id, patch); });
   };
   const select = (id: string, additive = false) => {
+    if (panel === 'comments' && panelRef.current) panelRef.current.scrollTop = 0;
     const group = metaFor(data, id).group;
     const ids = group ? rows.filter(r => r.meta.group === group).map(r => r.id) : [id];
     setSelected(additive ? selected.includes(id) ? selected.filter(v => !ids.includes(v)) : [...new Set([...selected, ...ids])] : ids);
@@ -87,22 +108,29 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
     chosen.filter(r => r.source === 'annotation').forEach(r => { void controller.moveMark(r.id, 12, -12, true); });
     setSelected([...ids.values()]);
   };
+  const saveMark = (mark: ReviewMark) => {
+    const exists = review.some(m => m.id === mark.id);
+    change({ ...data, review: exists ? review.map(m => m.id === mark.id ? mark : m) : [...review, mark],
+      reviewMeta: { ...data.reviewMeta, [mark.id]: exists ? metaFor(data, mark.id) : { ...metaFor(data, mark.id), author, discipline, layer: activeLayer || undefined } } });
+    setDraft(null); setHover(null); setSelected([mark.id]); setNote(mark.text); setMessage(`${mark.kind === 'Text' ? 'Comment' : mark.kind} added.`);
+    if (!panel) setTool('Select');
+  };
   const finish = (pending = draft) => {
     if (!pending || tool === 'Select') return;
     if (tool === 'Polygon' && (pending.points.length < 3 || !isSimpleOutline(pending.points))) { setMessage('Use at least three corners with no crossing edges.'); return; }
-    if (['Callout', 'Cloud callout', 'Text', 'Stamp'].includes(tool) && !note.trim()) { setMessage('Enter the note or stamp text first.'); return; }
-    const points = pending.points;
+    const points = [...pending.points];
     if (tool === 'Callout' && points.length === 2) points.splice(1, 0, [points[1][0] - 15, points[1][1] - 8]);
-    const id = crypto.randomUUID();
-    const mark: ReviewMark = { id, page: pending.page, kind: tool, points, text: note, style: { ...style }, createdAt: Date.now() };
-    change({ ...data, review: [...review, mark], reviewMeta: { ...data.reviewMeta, [id]: { ...metaFor(data, id), author, discipline, layer: activeLayer || undefined } } });
-    setDraft(null); setSelected([id]); setMessage(`${tool} added.`);
+    const mark: ReviewMark = { id: crypto.randomUUID(), page: pending.page, kind: tool === 'Comment' ? 'Text' : tool, points, text: note, style: { ...style }, createdAt: Date.now() };
+    if (['Callout', 'Cloud callout', 'Text', 'Stamp'].includes(mark.kind) && !note.trim()) {
+      setComposer(mark); setCommentText(''); setDraft(null); setHover(null); setPanel(null); return;
+    }
+    saveMark(mark);
   };
   useEffect(() => {
     if (!active) return;
     const key = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable=true]')) return;
-      if (e.key === 'Escape') { setDraft(null); setPreview(null); gesture.current = null; setSelected([]); }
+      if (e.key === 'Escape') { setTool('Select'); setComposer(null); setHover(null); creation.current = null; setDraft(null); setPreview(null); gesture.current = null; setSelected([]); }
       else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); e.stopImmediatePropagation(); remove(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.stopImmediatePropagation(); controller.undoDrawing(e.shiftKey); }
       else if (e.key === 'Enter' && tool === 'Polygon') { e.preventDefault(); finish(); }
@@ -110,6 +138,15 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
     window.addEventListener('keydown', key, true); return () => window.removeEventListener('keydown', key, true);
   });
   const filtered = rows.filter(r => (status === 'All' || r.meta.status === status || status === 'Unresolved' && r.meta.status !== 'Resolved') && (disciplineFilter === 'All' || r.meta.discipline === disciplineFilter) && `${r.text} ${r.kind} ${r.meta.author} ${r.meta.subject} ${r.page + 1}`.toLowerCase().includes(filter.toLowerCase()));
+  const hint = !active ? otherTool === 'highlight' ? 'Select text on the drawing to highlight it.' : otherTool === 'ink' ? 'Drag on the drawing to draw freehand.' : otherTool === 'Select' ? 'Choose a markup tool to continue reviewing.' : 'Use the measurement panel to set the scale and finish your measurement.'
+    : composer ? 'Type your comment, then choose Add comment.' : armedPreset?.points && tool !== 'Select' ? `Click once to place ${armedPreset.name}.`
+    : tool === 'Select' ? 'Choose Comment to add a note, or select an existing mark to edit it.'
+    : tool === 'Comment' ? 'Click anywhere on the drawing, then type your comment.'
+    : tool === 'Callout' ? 'Drag from the arrow tip to the note location, then type. Two clicks also work.'
+    : tool === 'Cloud callout' ? 'Choose opposite cloud corners, then click where you want the note.'
+    : tool === 'Polygon' ? 'Click each corner, then Finish polygon or press Enter.'
+    : ['Text', 'Stamp'].includes(tool) ? 'Drag a box on the drawing, then type your text.'
+    : 'Drag on the drawing, or click two endpoints. Hold Shift for 45° angles.';
   return <>
     {overlays.map(({ index, host, viewport, style: position }) => {
       const screen = (p: Point) => viewport.convertToViewportPoint(...p) as Point;
@@ -134,13 +171,19 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
       return createPortal(<svg className={`review-overlay ${active ? 'review-active' : ''}`} style={position} viewBox={`0 0 ${viewport.width} ${viewport.height}`} aria-label={`Review marks on page ${index + 1}`}
         onClick={e => { if (active) e.stopPropagation(); }}
         onPointerDown={e => {
-          if (!active || e.button !== 0 || !e.isPrimary) return;
+          if (!active || composer || e.button !== 0 || !e.isPrimary) return;
           e.preventDefault(); e.stopPropagation();
           const point = pointer(e);
           if (tool !== 'Select') {
+            if (tool === 'Comment') {
+              const [left, bottom, right, top] = viewport.viewBox, width = Math.min(180, right - left), height = Math.min(64, top - bottom);
+              const x = Math.max(left, Math.min(point[0], right - width)), y = Math.min(top, Math.max(point[1], bottom + height));
+              finish({ page: index, points: [[x, y], [x + width, y - height]] }); return;
+            }
             if (armedPreset?.points) { finish({ page: index, points: movePoints(armedPreset.points, point[0], point[1]) }); return; }
             const next = { page: index, points: [...(draft?.page === index ? draft.points : []), point] };
-            setDraft(next);
+            setDraft(next); setHover(null);
+            if (next.points.length === 1 && tool !== 'Polygon') { creation.current = { page: index, start: point, moved: false }; e.currentTarget.setPointerCapture(e.pointerId); }
             if (tool !== 'Polygon' && next.points.length === (tool === 'Cloud callout' ? 3 : 2)) finish(next);
             return;
           }
@@ -150,18 +193,35 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
           const vertexAttr = (e.target as Element).getAttribute('data-vertex');
           const group = metaFor(data, id).group;
           const ids = selected.includes(id) ? selected : group ? rows.filter(r => r.meta.group === group).map(r => r.id) : [id];
-          select(id, e.shiftKey);
+          select(id, e.shiftKey); if (!panel) setPanel('comments');
           if (ids.some(id => metaFor(data, id).locked) || e.shiftKey) return;
           gesture.current = { page: index, start: point, original: data, ids, vertex: vertexAttr === null ? undefined : Number(vertexAttr), moved: false };
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
+        onDoubleClick={e => {
+          const id = (e.target as Element).closest('[data-review-id]')?.getAttribute('data-review-id');
+          const mark = review.find(m => m.id === id);
+          if (active && tool === 'Select' && mark?.text && !metaFor(data, mark.id).locked) { setComposer(mark); setCommentText(mark.text); setPanel(null); }
+        }}
         onPointerMove={e => {
+          if (active && !composer && tool !== 'Select' && draft?.page === index) {
+            const point = pointer(e); setHover(point);
+            if (creation.current) creation.current.moved ||= Math.hypot(point[0] - creation.current.start[0], point[1] - creation.current.start[1]) * viewport.scale > 4;
+            return;
+          }
           const g = gesture.current; if (!g || g.page !== index) return;
           const point = pointer(e), x = point[0] - g.start[0], y = point[1] - g.start[1];
           g.moved = g.moved || Math.hypot(x, y) > .1;
           setPreview(g.vertex === undefined ? move(g.original, g.ids, x, y) : editVertex(g.original, g.ids[0], g.vertex, point));
         }}
         onPointerUp={e => {
+          const c = creation.current;
+          if (c) {
+            creation.current = null;
+            if (c.moved) { const next = { page: index, points: [c.start, pointer(e)] }; if (tool === 'Cloud callout') setDraft(next); else finish(next); }
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+            return;
+          }
           const g = gesture.current; if (!g) return;
           const point = pointer(e), x = point[0] - g.start[0], y = point[1] - g.start[1];
           if (g.moved) {
@@ -169,24 +229,37 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
             if (g.vertex === undefined) rows.filter(r => g.ids.includes(r.id) && r.source === 'annotation').forEach(r => { void controller.moveMark(r.id, x, y); });
           }
           gesture.current = null; setPreview(null); if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-        }} onPointerCancel={() => { gesture.current = null; setPreview(null); }} onLostPointerCapture={() => { gesture.current = null; setPreview(null); }}>
+        }} onPointerCancel={() => { creation.current = null; setDraft(null); setHover(null); gesture.current = null; setPreview(null); }} onLostPointerCapture={() => { creation.current = null; gesture.current = null; setPreview(null); }}>
         {(currentData.review ?? []).filter(m => m.page === index && markVisible(currentData, m.id)).map(m => paintMark(m))}
         {active && currentData.measurements.filter(m => m.page === index && markVisible(currentData, m.id)).map(m => <g key={m.id} data-review-id={m.id}><polyline points={m.points.map(screen).map(p => p.join(',')).join(' ')} fill="none" stroke="transparent" strokeWidth={14} /><text x={screen(m.points[0])[0]} y={screen(m.points[0])[1]} fill="transparent" fontSize={14}>{measurementLabel(m)}</text></g>)}
         {active && selected.length === 1 && !locked && markVisible(currentData, selected[0]) && (currentData.review?.find(m => m.id === selected[0]) ?? currentData.measurements.find(m => m.id === selected[0]))?.points.map((p, i) => { const [cx, cy] = screen(p); return <circle key={i} data-review-id={selected[0]} data-vertex={i} cx={cx} cy={cy} r={5} className="review-vertex" />; })}
-        {active && draft?.page === index && draft.points.length >= 2 && tool !== 'Select' && paintMark({ id: 'draft', page: index, points: draft.points, kind: tool, text: note, style, createdAt: 0 }, true)}
+        {active && draft?.page === index && (draft.points.length >= 2 || hover) && tool !== 'Select' && paintMark({ id: 'draft', page: index, points: tool === 'Callout' && hover ? [draft.points[0], [hover[0] - 15, hover[1] - 8], hover] : hover ? [...draft.points, hover] : draft.points, kind: tool === 'Comment' ? 'Text' : tool, text: note || 'Your comment', style, createdAt: 0 }, true)}
+        {active && composer?.page === index && paintMark({ ...composer, text: commentText || 'Your comment' }, true)}
         {active && draft?.page === index && draft.points.map((p, i) => { const [cx, cy] = screen(p); return <circle key={i} cx={cx} cy={cy} r={4} fill={style.color} />; })}
       </svg>, host, String(index));
     })}
-    {active && <aside className="review-panel" aria-label="Drawing review">
-      <header><strong>Drawing review</strong><button onClick={onClose}>Done</button></header>
-      <div className="review-actions"><button onClick={() => controller.undoDrawing()} title={keys('Undo review edit (Ctrl+Z)')}>Undo</button><button onClick={() => controller.undoDrawing(true)}>Redo</button><button onClick={onCompare}>Compare revisions</button><button onClick={onCarry}>Carry comments forward…</button></div>
-      <label>Review tool <select aria-label="Review tool" value={tool} onChange={e => { setTool(e.target.value as typeof tool); setArmedPreset(null); setSelected([]); setMessage(''); }}><option>Select</option>{reviewKinds.map(k => <option key={k}>{k}</option>)}</select></label>
+    {toolbarVisible && <ReviewToolbar tool={active ? tool : otherTool} hint={hint} message={message} color={style.color} count={rows.length} drawing={!!draft}
+      onTool={choose} onMeasure={onMeasure} onNative={onNative} onPanel={openPanel} onColor={color => { if (active) applyStyle({ color }); else setStyle(s => ({ ...s, color })); }}
+      onUndo={redo => { if (!active && ['ink', 'highlight', 'Select'].includes(otherTool)) bus.dispatch('editingaction', { source: null, name: redo ? 'redo' : 'undo' }); else controller.undoDrawing(redo); }} onCancel={() => { setDraft(null); setHover(null); }} onFinish={() => finish()}
+      onCompare={onCompare} onCarry={onCarry} onExport={onExport} onFlatten={onFlatten} onSave={onSave} onClose={onClose} />}
+    {active && composer && <form className="review-composer" aria-label="Comment editor" onSubmit={e => { e.preventDefault(); if (commentText.trim()) { saveMark({ ...composer, text: commentText.trim() }); setComposer(null); } }}
+      onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); setComposer(null); setTool('Select'); } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); e.currentTarget.requestSubmit(); } }}>
+      <header><strong>{review.some(m => m.id === composer.id) ? 'Edit comment' : 'Add a comment'}</strong><span>Sheet {composer.page + 1}</span></header>
+      <label htmlFor="drawing-comment">Comment</label><textarea id="drawing-comment" autoFocus value={commentText} maxLength={10000} placeholder="What needs attention?" onChange={e => setCommentText(e.target.value)} />
+      <div className="review-actions"><button type="button" onClick={() => { setComposer(null); setTool('Select'); }}>Cancel</button><button type="submit" className="primary" disabled={!commentText.trim()}>{review.some(m => m.id === composer.id) ? 'Save comment' : 'Add comment'}</button></div>
+      <small>{keys('Ctrl+Enter')} to save · Escape to cancel</small>
+    </form>}
+    {active && panel && <aside ref={panelRef} className={`review-panel review-panel-${panel}`} aria-label="Drawing review">
+      <header><strong>{panel === 'comments' ? `Comments (${rows.length})` : panel === 'layers' ? 'Markup layers' : panel === 'tools' ? 'Tool chest' : 'Markup properties'}</strong><button onClick={() => setPanel(null)}>Done</button></header>
+      <div className="review-actions review-advanced"><button onClick={() => controller.undoDrawing()} title={keys('Undo review edit (Ctrl+Z)')}>Undo</button><button onClick={() => controller.undoDrawing(true)}>Redo</button><button onClick={onCompare}>Compare revisions</button><button onClick={onCarry}>Carry comments forward…</button></div>
+      <div className="review-advanced"><label>Review tool <select aria-label="Review tool" value={tool} onChange={e => { setTool(e.target.value as typeof tool); setArmedPreset(null); setSelected([]); setMessage(''); }}><option>Select</option><option>Comment</option>{reviewKinds.map(k => <option key={k}>{k}</option>)}</select></label>
       <p className="review-hint">{armedPreset?.points && tool !== 'Select' ? `Click once to place ${armedPreset.name}.` : tool === 'Select' ? 'Select a mark to edit. Shift-click for multiple marks. Drag handles to adjust points.' : tool === 'Cloud callout' ? 'Click opposite cloud corners, then the note location. The cloud and note move together.' : tool === 'Callout' ? 'Click the arrow tip, then the note location.' : tool === 'Polygon' ? 'Click corners, then Finish. Hold Shift for 45° angles.' : 'Click two opposite corners or endpoints. Hold Shift for 45° angles.'}</p>
       {tool !== 'Select' && <div className="review-actions"><button disabled={!draft} onClick={() => setDraft(draft && draft.points.length > 1 ? { ...draft, points: draft.points.slice(0, -1) } : null)}>Undo point</button><button disabled={!draft} onClick={() => setDraft(null)}>Cancel drawing</button>{tool === 'Polygon' && <button onClick={() => finish()}>Finish</button>}</div>}
-      <label>Note or stamp text <textarea aria-label="Note or stamp text" value={note} maxLength={10000} onChange={e => { setNote(e.target.value); if (first && !locked) change({ ...data, review: review.map(m => m.id === first.id ? { ...m, text: e.target.value } : m) }); }} /></label>
+      </div>{panel === 'comments' && <button onClick={() => choose('Comment')}>Add a comment</button>}
+      {(first || panel !== 'comments') && <label>{panel === 'comments' ? 'Comment text' : 'Note or stamp text'} <textarea disabled={locked || external} aria-label="Note or stamp text" value={note} maxLength={10000} onChange={e => { setNote(e.target.value); if (first && !locked) change({ ...data, review: review.map(m => m.id === first.id ? { ...m, text: e.target.value } : m) }); }} /></label>}
       <div className="review-fields"><label>Author <input aria-label="Author" value={author} onChange={e => { setAuthor(e.target.value); try { localStorage.setItem('folio:review-author', e.target.value); } catch { /* Optional preference. */ } }} /></label><label>Discipline <input aria-label="Discipline" value={discipline} onChange={e => setDiscipline(e.target.value)} placeholder="Architectural" /></label></div>
-      <label><input type="checkbox" checked={snap} onChange={e => setSnap(e.target.checked)} /> Snap to vector endpoints</label>
-      <details open><summary>Markup layers</summary>
+      <label className="review-advanced"><input type="checkbox" checked={snap} onChange={e => setSnap(e.target.checked)} /> Snap to vector endpoints</label>
+      <details open data-section="layers"><summary>Markup layers</summary>
         <div className="review-fields"><label>New layer <input aria-label="New layer" maxLength={80} value={layerName} onChange={e => setLayerName(e.target.value)} /></label><button disabled={!layerName.trim() || (data.layers?.length ?? 0) >= 100} onClick={() => {
           const id = crypto.randomUUID(); change({ ...data, layers: [...(data.layers ?? []), { id, name: layerName.trim(), visible: true }] }); setActiveLayer(id); setLayerName('');
         }}>Add layer</button></div>
@@ -197,7 +270,7 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
         </div>)}
         <p className="review-hint">Hidden layers stay editable in Folio and are omitted from flattened copies. Show a layer here before sharing its visible marks. Assign measurements using the markup list.</p>
       </details>
-      <details open><summary>Properties</summary><fieldset disabled={locked || external}>
+      <details open data-section="properties"><summary>Properties</summary><fieldset disabled={locked || external}>
         <div className="review-fields"><label>Stroke <input aria-label="Stroke" type="color" value={style.color} onChange={e => applyStyle({ color: e.target.value })} /></label><label>Fill <input aria-label="Fill" type="color" value={style.fill === 'none' ? '#ffffff' : style.fill} onChange={e => applyStyle({ fill: e.target.value })} /></label><button onClick={() => applyStyle({ fill: 'none' })}>No fill</button></div>
         <div className="review-fields"><label>Line weight <input aria-label="Line weight" type="number" min="0.1" max="20" step="0.5" value={style.width} onChange={e => { const width = Number(e.target.value); if (width >= .1 && width <= 20) applyStyle({ width }); }} /></label><label>Line style <select aria-label="Line style" value={style.dash} onChange={e => applyStyle({ dash: e.target.value as ReviewStyle['dash'] })}>{['solid', 'dashed', 'dotted'].map(v => <option key={v}>{v}</option>)}</select></label><label>Opacity <input aria-label="Opacity" type="range" min="0.05" max="1" step="0.05" value={style.opacity} onChange={e => applyStyle({ opacity: Number(e.target.value) })} /></label></div>
         <div className="review-fields"><label>Font <select aria-label="Font" value={style.font} onChange={e => applyStyle({ font: e.target.value as ReviewStyle['font'] })}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label><label>Text size <input aria-label="Text size" type="number" min="6" max="96" value={style.fontSize} onChange={e => { const fontSize = Number(e.target.value); if (fontSize >= 6 && fontSize <= 96) applyStyle({ fontSize }); }} /></label></div>
@@ -210,20 +283,20 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
         <label>Subject <input aria-label="Subject" value={chosen[0].meta.subject} onChange={e => metadata({ subject: e.target.value })} /></label>
         <label>Review status <select aria-label="Review status" value={chosen[0].meta.status} onChange={e => metadata({ status: e.target.value as ReviewMeta['status'] })}>{['Open', 'Answered', 'Resolved'].map(v => <option key={v}>{v}</option>)}</select></label>
         <button onClick={() => metadata({ author, discipline })}>Apply author and discipline</button>
-        <div className="review-fields"><label>Move X (PDF points) <input aria-label="Move X (PDF points)" type="number" value={dx} onChange={e => setDx(Number(e.target.value))} /></label><label>Move Y (PDF points) <input aria-label="Move Y (PDF points)" type="number" value={dy} onChange={e => setDy(Number(e.target.value))} /></label><button disabled={locked || external || !Number.isFinite(dx + dy)} onClick={() => { change(move(data, selected, dx, dy)); chosen.filter(r => r.source === 'annotation').forEach(r => { void controller.moveMark(r.id, dx, dy); }); }}>Move</button></div>
-        {selected.length === 1 && selectedPoints && <fieldset disabled={locked || external}><legend>Vertex coordinates (PDF points)</legend><label>Vertex <select aria-label="Vertex" value={vertex} onChange={e => setVertex(Number(e.target.value))}>{selectedPoints.map((_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>{[0, 1].map(axis => <label key={axis}>{axis ? 'Y' : 'X'}<input type="number" step="0.1" value={Number((selectedPoints[vertex]?.[axis] ?? 0).toFixed(3))} onChange={e => { const n = Number(e.target.value); if (!Number.isFinite(n) || Math.abs(n) > 1e7) return; const point = [...selectedPoints[vertex]] as Point; point[axis] = n; commitGeometry(editVertex(data, selected[0], vertex, point)); }} /></label>)}</fieldset>}
+        <div className="review-fields review-advanced"><label>Move X (PDF points) <input aria-label="Move X (PDF points)" type="number" value={dx} onChange={e => setDx(Number(e.target.value))} /></label><label>Move Y (PDF points) <input aria-label="Move Y (PDF points)" type="number" value={dy} onChange={e => setDy(Number(e.target.value))} /></label><button disabled={locked || external || !Number.isFinite(dx + dy)} onClick={() => { change(move(data, selected, dx, dy)); chosen.filter(r => r.source === 'annotation').forEach(r => { void controller.moveMark(r.id, dx, dy); }); }}>Move</button></div>
+        {selected.length === 1 && selectedPoints && <fieldset className="review-advanced" disabled={locked || external}><legend>Vertex coordinates (PDF points)</legend><label>Vertex <select aria-label="Vertex" value={vertex} onChange={e => setVertex(Number(e.target.value))}>{selectedPoints.map((_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>{[0, 1].map(axis => <label key={axis}>{axis ? 'Y' : 'X'}<input type="number" step="0.1" value={Number((selectedPoints[vertex]?.[axis] ?? 0).toFixed(3))} onChange={e => { const n = Number(e.target.value); if (!Number.isFinite(n) || Math.abs(n) > 1e7) return; const point = [...selectedPoints[vertex]] as Point; point[axis] = n; commitGeometry(editVertex(data, selected[0], vertex, point)); }} /></label>)}</fieldset>}
         <ul className="review-replies">{chosen[0].meta.replies.map((r, i) => <li key={i}><strong>{r.author || 'Reviewer'}</strong> · {new Date(r.at).toLocaleString()}<p>{r.text}</p></li>)}</ul>
         <label>Reply <textarea aria-label="Reply" value={reply} onChange={e => setReply(e.target.value)} /></label><button disabled={!reply.trim()} onClick={() => { change({ ...data, reviewMeta: { ...data.reviewMeta, ...Object.fromEntries(selected.map(id => [id, { ...metaFor(data, id), replies: [...metaFor(data, id).replies, { text: reply.trim(), author, at: Date.now() }] }])) } }); setReply(''); }}>Add reply</button>
       </details>}
-      <details><summary>Reusable tools</summary><label>Saved tool <select aria-label="Saved tool" defaultValue="" onChange={e => { const preset = tools.find(p => p.id === e.target.value); if (!preset) return; setTool(preset.kind); setArmedPreset(preset); setStyle(preset.style); setNote(preset.text); setDiscipline(preset.discipline); setSelected([]); }}><option value="" disabled>Choose a tool…</option>{tools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <details data-section="tools"><summary>Reusable tools</summary><label>Saved tool <select aria-label="Saved tool" defaultValue="" onChange={e => { const preset = tools.find(p => p.id === e.target.value); if (!preset) return; setTool(preset.kind); setArmedPreset(preset); setStyle(preset.style); setNote(preset.text); setDiscipline(preset.discipline); setSelected([]); }}><option value="" disabled>Choose a tool…</option>{tools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
         <label>Tool name <input aria-label="Tool name" value={presetName} onChange={e => setPresetName(e.target.value)} /></label><button disabled={!presetName.trim() || tool === 'Select' && !first} onClick={() => {
-          const preset = { points: first ? movePoints(first.points, -first.points[0][0], -first.points[0][1]) : undefined, id: crypto.randomUUID(), name: presetName.trim(), kind: first?.kind ?? tool as ReviewKind, text: note, style, discipline };
+          const preset = { points: first ? movePoints(first.points, -first.points[0][0], -first.points[0][1]) : undefined, id: crypto.randomUUID(), name: presetName.trim(), kind: first?.kind ?? (tool === 'Comment' ? 'Text' : tool) as ReviewKind, text: note, style, discipline };
           const next = [...tools, preset];
           try { localStorage.setItem('folio:review-tools', JSON.stringify(next.filter(p => !starterTools.some(s => s.id === p.id)))); setTools(next); setPresetName(''); setMessage('Tool saved for other documents.'); } catch { setMessage('Could not save the tool on this computer.'); }
         }}>Save current tool</button>
         {tools.filter(p => !starterTools.some(s => s.id === p.id)).map(p => <div key={p.id}>{p.name}<button aria-label={`Remove tool ${p.name}`} onClick={() => { const next = tools.filter(t => t.id !== p.id); try { localStorage.setItem('folio:review-tools', JSON.stringify(next.filter(p => !starterTools.some(s => s.id === p.id)))); setTools(next); } catch { setMessage('Could not remove the tool.'); } }}>Remove</button></div>)}
       </details>
-      <details open><summary>Markup list ({rows.length})</summary>
+      <details open data-section="comments"><summary>Markup list ({rows.length})</summary>
         <label>Search markups <input aria-label="Search markups" type="search" value={filter} onChange={e => setFilter(e.target.value)} /></label>
         <div className="review-fields"><label>Filter status <select aria-label="Filter status" value={status} onChange={e => setStatus(e.target.value)}>{['All', 'Unresolved', 'Open', 'Answered', 'Resolved'].map(s => <option key={s}>{s}</option>)}</select></label><label>Filter discipline <select aria-label="Filter discipline" value={disciplineFilter} onChange={e => setDisciplineFilter(e.target.value)}>{['All', ...new Set(rows.map(r => r.meta.discipline).filter(Boolean))].map(d => <option key={d}>{d}</option>)}</select></label></div>
         <ul className="review-list">{filtered.map(row => <li key={row.id} className={selected.includes(row.id) ? 'selected' : ''}><input type="checkbox" aria-label={`Select ${row.kind} on sheet ${row.page + 1}`} checked={selected.includes(row.id)} onChange={() => select(row.id, true)} /><button onClick={() => { setTool('Select'); select(row.id); if (row.source === 'annotation') controller.reveal(row.id); else {
@@ -233,6 +306,7 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, onClos
           } }}><strong>Sheet {row.page + 1} · {row.kind} · {row.meta.status}</strong><span>{row.meta.subject || row.text || 'No comment'}</span><small>{[row.meta.author, row.meta.discipline, data.layers?.find(l => l.id === row.meta.layer)?.name, !markVisible(data, row.id) ? 'Hidden' : '', row.meta.carriedFrom ? 'Carried forward — verify' : '', row.meta.locked ? 'Locked' : ''].filter(Boolean).join(' · ')}</small></button></li>)}</ul>
         <div className="review-actions"><button onClick={() => onExport('csv')}>Export CSV</button><button onClick={() => onExport('pdf')}>Review report</button><button onClick={onFlatten}>Save flattened copy…</button></div>
       </details>
+      {!rows.length && panel === 'comments' && <p>No comments yet. Choose Add a comment, then click the drawing.</p>}
       <p role="status">{message}</p>
     </aside>}
   </>;

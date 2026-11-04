@@ -10,11 +10,13 @@ interface Props {
   bus: EventBus;
   active: boolean;
   page: number;
+  requestedTool?: { tool: MeasureKind | "Calibrate"; sequence: number };
+  onModeChange?: (mode: MeasureKind | "Calibrate") => void;
   data?: DrawingData;
   onChange: (data: DrawingData) => void;
   onClose: () => void;
 }
-export function Measurements({ viewer, bus, active, page, data = emptyDrawing(), onChange, onClose }: Props) {
+export function Measurements({ viewer, bus, active, page, requestedTool, onModeChange, data = emptyDrawing(), onChange, onClose }: Props) {
   // pdf.js replaces page children during zoom/rotation. Keep React's portal children in
   // their own host and reattach that host after each page render.
   const hosts = useRef(new Map<number, HTMLDivElement>());
@@ -26,6 +28,8 @@ export function Measurements({ viewer, bus, active, page, data = emptyDrawing(),
   });
   useEffect(() => () => { for (const host of hosts.current.values()) host.remove(); }, []);
   const [mode, setMode] = useState<MeasureKind | "Calibrate">("Calibrate");
+  useEffect(() => { if (requestedTool) { setMode(requestedTool.tool); setDraft(null); } }, [requestedTool]);
+  useEffect(() => { if (active) onModeChange?.(mode); }, [mode, active, onModeChange]);
   const [draft, setDraft] = useState<{ page: number; points: Point[] } | null>(null);
   const [snap, setSnap] = useState(true);
   const endpoints = useRef(new Map<number, import("./measurements").Point[]>());
