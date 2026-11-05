@@ -57,13 +57,16 @@ out of the way, collapse it, or close it when finished. Its three groups bring t
 
 - **Markup:** comments, arrows, callouts, clouds, text, shapes, stamps, highlighting, freehand, and signing.
 - **Measure:** calibration, length, area, perimeter, and count; the measurement panel holds scale settings.
-- **Review:** comments and replies, layers, the saved Tool chest, properties, revision comparison, carrying
+- **Review:** comments and replies, layers, the saved Tool chest, Style, Review details, Arrange, revision comparison, carrying
   comments forward, CSV/report exports, and flattening. **Save PDF copy** is always available.
 
 To comment, choose **Comment**, click the drawing, type your note, and choose **Add comment**.
 For an arrow or shape, drag on the drawing (two clicks also work). For a callout, drag from the arrow tip
 to the note location, then type. Escape cancels an unfinished mark. Select a saved mark to edit it or
-open **Comments** to find it, reply, or change its status. **Properties** contains the precise editing controls.
+open **Comments** to find it, reply, or change its status. **Style** groups color, fill, line weight, font, text size, and opacity with a live preview.
+**Review details** holds author, discipline, subject, status, and layer assignment. It shows the selected
+markup’s values; with nothing selected, it edits defaults for new marks. **Layers** manages layer
+visibility and names. **Arrange** holds grouping, locking, movement, snapping, and point coordinates.
 
 - **Measure:** calibrate each sheet against a known dimension in feet, inches, meters, centimeters, or
   millimeters. Place lengths, closed areas and perimeters, or counts. Measurements retain their original

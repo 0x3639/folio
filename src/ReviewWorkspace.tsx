@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 import type { EventBus, PDFViewer } from './viewer';
 import type { MarkupController, MarkupState } from './markup';
 import { emptyDrawing, measurementLabel, isSimpleOutline, type Point } from './measurements';
-import { bounds, defaultStyle, markVisible, metaFor, movePoints, readToolPresets, reviewGeometry, reviewKinds, reviewRows, starterTools, type ReviewKind, type ReviewMark, type ReviewMeta, type ReviewStyle } from './reviewModel';
+import { bounds, defaultStyle, markVisible, metaFor, movePoints, readToolPresets, reviewGeometry, reviewRows, starterTools, type ReviewKind, type ReviewMark, type ReviewMeta, type ReviewStyle } from './reviewModel';
 import { usePageOverlays } from './pageOverlays';
 import { drawingEndpoints, snapPoint } from './drawingSnap';
 import { keys } from './platform';
+import { ReviewStylePanel } from './ReviewStylePanel';
+const reviewPanels: [ReviewPanel, string][] = [['style', 'Style'], ['details', 'Review details'], ['layers', 'Layers'], ['comments', 'Comments'], ['arrange', 'Arrange'], ['tools', 'Tool chest']];
 import { ReviewToolbar, type DrawingTool, type ReviewPanel, type MeasureTool } from './ReviewToolbar';
 interface Props { viewer: PDFViewer; bus: EventBus; state: MarkupState; controller: MarkupController; active: boolean; toolbarVisible: boolean; otherTool: string; onActivate: () => Promise<boolean>; onMeasure: (tool: MeasureTool) => void; onNative: (tool: 'highlight' | 'ink' | 'sign') => void; onSave: () => void; onClose: () => void; onExport: (format: 'csv' | 'pdf') => void; onCompare: () => void; onCarry: () => void; onFlatten: () => void }
 export function ReviewWorkspace({ viewer, bus, state, controller, active, toolbarVisible, otherTool, onActivate, onMeasure, onNative, onSave, onClose, onExport, onCompare, onCarry, onFlatten }: Props) {
@@ -52,10 +54,8 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, toolba
   }, [active, viewer, page]);
   useEffect(() => { setDraft(null); setPreview(null); setHover(null); creation.current = null; gesture.current = null; if (!active) { setComposer(null); setPanel(null); } }, [tool, active]);
   useEffect(() => { setVertex(0); }, [selected.join(',')]);
-  useEffect(() => {
-    const section = panelRef.current?.querySelector<HTMLElement>(`[data-section="${panel}"]`);
-    if (section) { (section as HTMLDetailsElement).open = true; section.scrollIntoView({ block: 'nearest' }); }
-  }, [panel]);
+  useEffect(() => { if (first) { setStyle(first.style); setNote(first.text); } }, [first]);
+  useEffect(() => { if (panelRef.current) panelRef.current.scrollTop = 0; }, [panel]);
   const choose = async (next: DrawingTool) => {
     if (!active && !await onActivate()) return;
     setTool(next); if (next === 'Comment') setStyle(s => ({ ...s, color: '#333333', fill: '#fff4b8' })); setArmedPreset(null); setSelected([]); setNote(''); setMessage(''); setDraft(null); setComposer(null); setHover(null); setPanel(null);
@@ -71,7 +71,7 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, toolba
   };
   const applyStyle = (patch: Partial<ReviewStyle>) => {
     setStyle(s => ({ ...s, ...patch }));
-    if (!selected.length || locked) return;
+    if (!chosen.length || locked || external || chosen.some(r => r.source === 'measurement')) return;
     change({ ...data, review: review.map(m => selected.includes(m.id) ? { ...m, style: { ...m.style, ...patch } } : m) });
     chosen.filter(r => r.source === 'annotation').forEach(r => { void controller.styleMark(r.id, patch); });
   };
@@ -147,6 +147,15 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, toolba
     : tool === 'Polygon' ? 'Click each corner, then Finish polygon or press Enter.'
     : ['Text', 'Stamp'].includes(tool) ? 'Drag a box on the drawing, then type your text.'
     : 'Drag on the drawing, or click two endpoints. Hold Shift for 45° angles.';
+  const hasSelection = chosen.length > 0;
+  const scope = hasSelection ? `${chosen.length} selected · ${chosen.length === 1 ? chosen[0].kind + ' · Sheet ' + (chosen[0].page + 1) : 'changes apply to all selected marks'}` : tool === 'Select' ? 'Defaults for new marks' : `New ${tool.toLowerCase()}`;
+  const textEditor = (!hasSelection || first) && <label>{chosen.length > 1 ? 'Text of first selected markup' : 'Comment or stamp text'} <textarea aria-label="Note or stamp text" disabled={locked || external} value={note} maxLength={10000} onChange={e => {
+    setNote(e.target.value); if (first && !locked) change({ ...data, review: review.map(m => m.id === first.id ? { ...m, text: e.target.value } : m) });
+  }} /></label>;
+  const reviewStatus = hasSelection && <><label>Review status <select aria-label="Review status" value={chosen[0].meta.status} onChange={e => metadata({ status: e.target.value as ReviewMeta['status'] })}>{['Open', 'Answered', 'Resolved'].map(v => <option key={v}>{v}</option>)}</select></label></>;
+  const selectedLayer = hasSelection && <><label>Selected layer <select aria-label="Selected layer" disabled={external || locked} value={chosen[0].meta.layer ?? ''} onChange={e => metadata({ layer: e.target.value || undefined })}><option value="">Unassigned</option>{(data.layers ?? []).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label></>;
+  const provenance = hasSelection && <>{chosen[0].meta.carriedFrom && <p>Carried from {chosen[0].meta.carriedFrom.document}, sheet {chosen[0].meta.carriedFrom.page + 1}. Check placement and any measurement scale against this revision.</p>}</>;
+  const selectionActions = hasSelection && <><div className="review-actions"><button disabled={locked || external} onClick={duplicate}>Duplicate</button><button disabled={locked || external || selected.length < 2 || new Set(chosen.map(r => r.page)).size > 1} onClick={() => metadata({ group: crypto.randomUUID() })}>Group</button><button disabled={locked || external} onClick={() => metadata({ group: undefined })}>Ungroup</button><button onClick={() => metadata({ locked: !locked })}>{locked ? 'Unlock' : 'Lock'}</button><button disabled={locked || external} onClick={remove}>Delete</button></div></>;
   return <>
     {overlays.map(({ index, host, viewport, style: position }) => {
       const screen = (p: Point) => viewport.convertToViewportPoint(...p) as Point;
@@ -238,8 +247,8 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, toolba
         {active && draft?.page === index && draft.points.map((p, i) => { const [cx, cy] = screen(p); return <circle key={i} cx={cx} cy={cy} r={4} fill={style.color} />; })}
       </svg>, host, String(index));
     })}
-    {toolbarVisible && <ReviewToolbar tool={active ? tool : otherTool} hint={hint} message={message} color={style.color} count={rows.length} drawing={!!draft}
-      onTool={choose} onMeasure={onMeasure} onNative={onNative} onPanel={openPanel} onColor={color => { if (active) applyStyle({ color }); else setStyle(s => ({ ...s, color })); }}
+    {toolbarVisible && <ReviewToolbar tool={active ? tool : otherTool} hint={hint} message={message} count={rows.length} drawing={!!draft}
+      onTool={choose} onMeasure={onMeasure} onNative={onNative} onPanel={openPanel}
       onUndo={redo => { if (!active && ['ink', 'highlight', 'Select'].includes(otherTool)) bus.dispatch('editingaction', { source: null, name: redo ? 'redo' : 'undo' }); else controller.undoDrawing(redo); }} onCancel={() => { setDraft(null); setHover(null); }} onFinish={() => finish()}
       onCompare={onCompare} onCarry={onCarry} onExport={onExport} onFlatten={onFlatten} onSave={onSave} onClose={onClose} />}
     {active && composer && <form className="review-composer" aria-label="Comment editor" onSubmit={e => { e.preventDefault(); if (commentText.trim()) { saveMark({ ...composer, text: commentText.trim() }); setComposer(null); } }}
@@ -250,16 +259,28 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, toolba
       <small>{keys('Ctrl+Enter')} to save · Escape to cancel</small>
     </form>}
     {active && panel && <aside ref={panelRef} className={`review-panel review-panel-${panel}`} aria-label="Drawing review">
-      <header><strong>{panel === 'comments' ? `Comments (${rows.length})` : panel === 'layers' ? 'Markup layers' : panel === 'tools' ? 'Tool chest' : 'Markup properties'}</strong><button onClick={() => setPanel(null)}>Done</button></header>
-      <div className="review-actions review-advanced"><button onClick={() => controller.undoDrawing()} title={keys('Undo review edit (Ctrl+Z)')}>Undo</button><button onClick={() => controller.undoDrawing(true)}>Redo</button><button onClick={onCompare}>Compare revisions</button><button onClick={onCarry}>Carry comments forward…</button></div>
-      <div className="review-advanced"><label>Review tool <select aria-label="Review tool" value={tool} onChange={e => { setTool(e.target.value as typeof tool); setArmedPreset(null); setSelected([]); setMessage(''); }}><option>Select</option><option>Comment</option>{reviewKinds.map(k => <option key={k}>{k}</option>)}</select></label>
-      <p className="review-hint">{armedPreset?.points && tool !== 'Select' ? `Click once to place ${armedPreset.name}.` : tool === 'Select' ? 'Select a mark to edit. Shift-click for multiple marks. Drag handles to adjust points.' : tool === 'Cloud callout' ? 'Click opposite cloud corners, then the note location. The cloud and note move together.' : tool === 'Callout' ? 'Click the arrow tip, then the note location.' : tool === 'Polygon' ? 'Click corners, then Finish. Hold Shift for 45° angles.' : 'Click two opposite corners or endpoints. Hold Shift for 45° angles.'}</p>
-      {tool !== 'Select' && <div className="review-actions"><button disabled={!draft} onClick={() => setDraft(draft && draft.points.length > 1 ? { ...draft, points: draft.points.slice(0, -1) } : null)}>Undo point</button><button disabled={!draft} onClick={() => setDraft(null)}>Cancel drawing</button>{tool === 'Polygon' && <button onClick={() => finish()}>Finish</button>}</div>}
-      </div>{panel === 'comments' && <button onClick={() => choose('Comment')}>Add a comment</button>}
-      {(first || panel !== 'comments') && <label>{panel === 'comments' ? 'Comment text' : 'Note or stamp text'} <textarea disabled={locked || external} aria-label="Note or stamp text" value={note} maxLength={10000} onChange={e => { setNote(e.target.value); if (first && !locked) change({ ...data, review: review.map(m => m.id === first.id ? { ...m, text: e.target.value } : m) }); }} /></label>}
-      <div className="review-fields"><label>Author <input aria-label="Author" value={author} onChange={e => { setAuthor(e.target.value); try { localStorage.setItem('folio:review-author', e.target.value); } catch { /* Optional preference. */ } }} /></label><label>Discipline <input aria-label="Discipline" value={discipline} onChange={e => setDiscipline(e.target.value)} placeholder="Architectural" /></label></div>
-      <label className="review-advanced"><input type="checkbox" checked={snap} onChange={e => setSnap(e.target.checked)} /> Snap to vector endpoints</label>
-      <details open data-section="layers"><summary>Markup layers</summary>
+      <header><strong>{reviewPanels.find(([id]) => id === panel)?.[1]}</strong><button onClick={() => setPanel(null)}>Done</button></header>
+      <nav className="review-panel-nav" aria-label="Review panels">{reviewPanels.map(([id, label]) => <button key={id} aria-pressed={panel === id} onClick={() => openPanel(id)}>{label}</button>)}</nav>
+      <p className="review-panel-scope">{scope}</p>
+      {panel === 'style' && <>
+        <p className="review-hint">Change how the markup looks. {hasSelection ? 'Changes appear on the selected marks immediately.' : 'Choose a tool and set its style before drawing.'}</p>
+        {locked && <p>Unlock the selection in Arrange to change its style.</p>}
+        {(external || chosen.some(r => r.source === 'measurement')) && <p>This selection’s appearance cannot be changed here. Review details and comments are available separately.</p>}
+        <ReviewStylePanel style={first?.style ?? style} onChange={applyStyle} disabled={locked || external || chosen.some(r => r.source === 'measurement')} />
+      </>}
+      {panel === 'details' && <section aria-label="Review details">
+        <p className="review-hint">{hasSelection ? 'Track who reviewed this markup, its status, and its layer.' : 'Set the reviewer and layer for new marks. Select a markup to change its subject or status.'}</p>
+        {hasSelection && <><label>Subject <input aria-label="Subject" value={chosen[0].meta.subject} onChange={e => metadata({ subject: e.target.value })} /></label></>}
+        <label>Author <input aria-label="Author" value={hasSelection ? chosen[0].meta.author : author} onChange={e => {
+          if (hasSelection) metadata({ author: e.target.value });
+          else { setAuthor(e.target.value); try { localStorage.setItem('folio:review-author', e.target.value); } catch { /* Optional preference. */ } }
+        }} /></label>
+        <label>Discipline <input aria-label="Discipline" value={hasSelection ? chosen[0].meta.discipline : discipline} onChange={e => { if (hasSelection) metadata({ discipline: e.target.value }); else setDiscipline(e.target.value); }} placeholder="Architectural" /></label>
+        {reviewStatus}{selectedLayer}
+        {!hasSelection && <label>Layer for new marks <select aria-label="Layer for new marks" value={activeLayer} onChange={e => setActiveLayer(e.target.value)}><option value="">Unassigned</option>{(data.layers ?? []).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>}
+        {provenance}
+      </section>}
+      {panel === 'layers' && <>{selectedLayer}<section aria-label="Markup layers">
         <div className="review-fields"><label>New layer <input aria-label="New layer" maxLength={80} value={layerName} onChange={e => setLayerName(e.target.value)} /></label><button disabled={!layerName.trim() || (data.layers?.length ?? 0) >= 100} onClick={() => {
           const id = crypto.randomUUID(); change({ ...data, layers: [...(data.layers ?? []), { id, name: layerName.trim(), visible: true }] }); setActiveLayer(id); setLayerName('');
         }}>Add layer</button></div>
@@ -269,34 +290,31 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, toolba
           <input aria-label={`Layer name ${layer.name}`} maxLength={80} value={layer.name} onChange={e => { if (e.target.value.trim()) change({ ...data, layers: data.layers?.map(l => l.id === layer.id ? { ...l, name: e.target.value } : l) }); }} />
         </div>)}
         <p className="review-hint">Hidden layers stay editable in Folio and are omitted from flattened copies. Show a layer here before sharing its visible marks. Assign measurements using the markup list.</p>
-      </details>
-      <details open data-section="properties"><summary>Properties</summary><fieldset disabled={locked || external}>
-        <div className="review-fields"><label>Stroke <input aria-label="Stroke" type="color" value={style.color} onChange={e => applyStyle({ color: e.target.value })} /></label><label>Fill <input aria-label="Fill" type="color" value={style.fill === 'none' ? '#ffffff' : style.fill} onChange={e => applyStyle({ fill: e.target.value })} /></label><button onClick={() => applyStyle({ fill: 'none' })}>No fill</button></div>
-        <div className="review-fields"><label>Line weight <input aria-label="Line weight" type="number" min="0.1" max="20" step="0.5" value={style.width} onChange={e => { const width = Number(e.target.value); if (width >= .1 && width <= 20) applyStyle({ width }); }} /></label><label>Line style <select aria-label="Line style" value={style.dash} onChange={e => applyStyle({ dash: e.target.value as ReviewStyle['dash'] })}>{['solid', 'dashed', 'dotted'].map(v => <option key={v}>{v}</option>)}</select></label><label>Opacity <input aria-label="Opacity" type="range" min="0.05" max="1" step="0.05" value={style.opacity} onChange={e => applyStyle({ opacity: Number(e.target.value) })} /></label></div>
-        <div className="review-fields"><label>Font <select aria-label="Font" value={style.font} onChange={e => applyStyle({ font: e.target.value as ReviewStyle['font'] })}><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option></select></label><label>Text size <input aria-label="Text size" type="number" min="6" max="96" value={style.fontSize} onChange={e => { const fontSize = Number(e.target.value); if (fontSize >= 6 && fontSize <= 96) applyStyle({ fontSize }); }} /></label></div>
-        <label><input type="checkbox" checked={style.arrow} onChange={e => applyStyle({ arrow: e.target.checked })} /> Arrowhead</label>
-      </fieldset></details>
-      {chosen.length > 0 && <details open><summary>{chosen.length} selected</summary>{external && <p>Original PDF annotation: status, subject, replies, and reviewer fields can be tracked here. Use a new callout to propose a change to its content.</p>}
-        <div className="review-actions"><button disabled={locked || external} onClick={duplicate}>Duplicate</button><button disabled={locked || external || selected.length < 2 || new Set(chosen.map(r => r.page)).size > 1} onClick={() => metadata({ group: crypto.randomUUID() })}>Group</button><button disabled={locked || external} onClick={() => metadata({ group: undefined })}>Ungroup</button><button onClick={() => metadata({ locked: !locked })}>{locked ? 'Unlock' : 'Lock'}</button><button disabled={locked || external} onClick={remove}>Delete</button></div>
-        <label>Selected layer <select aria-label="Selected layer" disabled={external || locked} value={chosen[0].meta.layer ?? ''} onChange={e => metadata({ layer: e.target.value || undefined })}><option value="">Unassigned</option>{(data.layers ?? []).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
-        {chosen[0].meta.carriedFrom && <p>Carried from {chosen[0].meta.carriedFrom.document}, sheet {chosen[0].meta.carriedFrom.page + 1}. Check placement and any measurement scale against this revision.</p>}
-        <label>Subject <input aria-label="Subject" value={chosen[0].meta.subject} onChange={e => metadata({ subject: e.target.value })} /></label>
-        <label>Review status <select aria-label="Review status" value={chosen[0].meta.status} onChange={e => metadata({ status: e.target.value as ReviewMeta['status'] })}>{['Open', 'Answered', 'Resolved'].map(v => <option key={v}>{v}</option>)}</select></label>
-        <button onClick={() => metadata({ author, discipline })}>Apply author and discipline</button>
-        <div className="review-fields review-advanced"><label>Move X (PDF points) <input aria-label="Move X (PDF points)" type="number" value={dx} onChange={e => setDx(Number(e.target.value))} /></label><label>Move Y (PDF points) <input aria-label="Move Y (PDF points)" type="number" value={dy} onChange={e => setDy(Number(e.target.value))} /></label><button disabled={locked || external || !Number.isFinite(dx + dy)} onClick={() => { change(move(data, selected, dx, dy)); chosen.filter(r => r.source === 'annotation').forEach(r => { void controller.moveMark(r.id, dx, dy); }); }}>Move</button></div>
-        {selected.length === 1 && selectedPoints && <fieldset className="review-advanced" disabled={locked || external}><legend>Vertex coordinates (PDF points)</legend><label>Vertex <select aria-label="Vertex" value={vertex} onChange={e => setVertex(Number(e.target.value))}>{selectedPoints.map((_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>{[0, 1].map(axis => <label key={axis}>{axis ? 'Y' : 'X'}<input type="number" step="0.1" value={Number((selectedPoints[vertex]?.[axis] ?? 0).toFixed(3))} onChange={e => { const n = Number(e.target.value); if (!Number.isFinite(n) || Math.abs(n) > 1e7) return; const point = [...selectedPoints[vertex]] as Point; point[axis] = n; commitGeometry(editVertex(data, selected[0], vertex, point)); }} /></label>)}</fieldset>}
-        <ul className="review-replies">{chosen[0].meta.replies.map((r, i) => <li key={i}><strong>{r.author || 'Reviewer'}</strong> · {new Date(r.at).toLocaleString()}<p>{r.text}</p></li>)}</ul>
-        <label>Reply <textarea aria-label="Reply" value={reply} onChange={e => setReply(e.target.value)} /></label><button disabled={!reply.trim()} onClick={() => { change({ ...data, reviewMeta: { ...data.reviewMeta, ...Object.fromEntries(selected.map(id => [id, { ...metaFor(data, id), replies: [...metaFor(data, id).replies, { text: reply.trim(), author, at: Date.now() }] }])) } }); setReply(''); }}>Add reply</button>
-      </details>}
-      <details data-section="tools"><summary>Reusable tools</summary><label>Saved tool <select aria-label="Saved tool" defaultValue="" onChange={e => { const preset = tools.find(p => p.id === e.target.value); if (!preset) return; setTool(preset.kind); setArmedPreset(preset); setStyle(preset.style); setNote(preset.text); setDiscipline(preset.discipline); setSelected([]); }}><option value="" disabled>Choose a tool…</option>{tools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      </section></>}
+      {panel === 'arrange' && <section aria-label="Arrange marks">
+        <p className="review-hint">Select marks to move, duplicate, group, or lock them. Shift-click to select more than one.</p>
+        <label><input type="checkbox" checked={snap} onChange={e => setSnap(e.target.checked)} /> Snap to vector endpoints</label>
+        {selectionActions}
+        {hasSelection && <><div className="review-fields"><label>Move X (PDF points) <input aria-label="Move X (PDF points)" type="number" value={dx} onChange={e => setDx(Number(e.target.value))} /></label><label>Move Y (PDF points) <input aria-label="Move Y (PDF points)" type="number" value={dy} onChange={e => setDy(Number(e.target.value))} /></label><button disabled={locked || external || !Number.isFinite(dx + dy)} onClick={() => { change(move(data, selected, dx, dy)); chosen.filter(r => r.source === 'annotation').forEach(r => { void controller.moveMark(r.id, dx, dy); }); }}>Move</button></div>
+        {selected.length === 1 && selectedPoints && <fieldset className="review-advanced" disabled={locked || external}><legend>Vertex coordinates (PDF points)</legend><label>Vertex <select aria-label="Vertex" value={vertex} onChange={e => setVertex(Number(e.target.value))}>{selectedPoints.map((_, i) => <option key={i} value={i}>{i + 1}</option>)}</select></label>{[0, 1].map(axis => <label key={axis}>{axis ? 'Y' : 'X'}<input type="number" step="0.1" value={Number((selectedPoints[vertex]?.[axis] ?? 0).toFixed(3))} onChange={e => { const n = Number(e.target.value); if (!Number.isFinite(n) || Math.abs(n) > 1e7) return; const point = [...selectedPoints[vertex]] as Point; point[axis] = n; commitGeometry(editVertex(data, selected[0], vertex, point)); }} /></label>)}</fieldset>}</>}
+      </section>}
+      {panel === 'tools' && <><p className="review-hint">Save a selected markup’s geometry and appearance, or the current tool’s style, to reuse later.</p><section aria-label="Reusable tools"><label>Saved tool <select aria-label="Saved tool" defaultValue="" onChange={e => { const preset = tools.find(p => p.id === e.target.value); if (!preset) return; setTool(preset.kind); setArmedPreset(preset); setStyle(preset.style); setNote(preset.text); setDiscipline(preset.discipline); setSelected([]); }}><option value="" disabled>Choose a tool…</option>{tools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
         <label>Tool name <input aria-label="Tool name" value={presetName} onChange={e => setPresetName(e.target.value)} /></label><button disabled={!presetName.trim() || tool === 'Select' && !first} onClick={() => {
-          const preset = { points: first ? movePoints(first.points, -first.points[0][0], -first.points[0][1]) : undefined, id: crypto.randomUUID(), name: presetName.trim(), kind: first?.kind ?? (tool === 'Comment' ? 'Text' : tool) as ReviewKind, text: note, style, discipline };
+          const preset = { points: first ? movePoints(first.points, -first.points[0][0], -first.points[0][1]) : undefined, id: crypto.randomUUID(), name: presetName.trim(), kind: first?.kind ?? (tool === 'Comment' ? 'Text' : tool) as ReviewKind, text: note, style, discipline: chosen[0]?.meta.discipline ?? discipline };
           const next = [...tools, preset];
           try { localStorage.setItem('folio:review-tools', JSON.stringify(next.filter(p => !starterTools.some(s => s.id === p.id)))); setTools(next); setPresetName(''); setMessage('Tool saved for other documents.'); } catch { setMessage('Could not save the tool on this computer.'); }
         }}>Save current tool</button>
         {tools.filter(p => !starterTools.some(s => s.id === p.id)).map(p => <div key={p.id}>{p.name}<button aria-label={`Remove tool ${p.name}`} onClick={() => { const next = tools.filter(t => t.id !== p.id); try { localStorage.setItem('folio:review-tools', JSON.stringify(next.filter(p => !starterTools.some(s => s.id === p.id)))); setTools(next); } catch { setMessage('Could not remove the tool.'); } }}>Remove</button></div>)}
-      </details>
-      <details open data-section="comments"><summary>Markup list ({rows.length})</summary>
+      </section></>}
+      {panel === 'comments' && <>
+        <button onClick={() => choose('Comment')}>Add a comment</button>
+        {hasSelection && <section className="review-comment-thread" aria-label="Selected comment">
+          {textEditor}{reviewStatus}
+          {external && <p>Original PDF annotation: add replies or track its status here. Add a callout to propose changes to its content.</p>}
+          <ul className="review-replies">{chosen[0].meta.replies.map((r, i) => <li key={i}><strong>{r.author || 'Reviewer'}</strong> · {new Date(r.at).toLocaleString()}<p>{r.text}</p></li>)}</ul>
+        <label>Reply <textarea aria-label="Reply" value={reply} onChange={e => setReply(e.target.value)} /></label><button disabled={!reply.trim()} onClick={() => { change({ ...data, reviewMeta: { ...data.reviewMeta, ...Object.fromEntries(selected.map(id => [id, { ...metaFor(data, id), replies: [...metaFor(data, id).replies, { text: reply.trim(), author, at: Date.now() }] }])) } }); setReply(''); }}>Add reply</button>
+        </section>}
+        <section aria-label="Markup list"><h3>Markup list ({rows.length})</h3>
         <label>Search markups <input aria-label="Search markups" type="search" value={filter} onChange={e => setFilter(e.target.value)} /></label>
         <div className="review-fields"><label>Filter status <select aria-label="Filter status" value={status} onChange={e => setStatus(e.target.value)}>{['All', 'Unresolved', 'Open', 'Answered', 'Resolved'].map(s => <option key={s}>{s}</option>)}</select></label><label>Filter discipline <select aria-label="Filter discipline" value={disciplineFilter} onChange={e => setDisciplineFilter(e.target.value)}>{['All', ...new Set(rows.map(r => r.meta.discipline).filter(Boolean))].map(d => <option key={d}>{d}</option>)}</select></label></div>
         <ul className="review-list">{filtered.map(row => <li key={row.id} className={selected.includes(row.id) ? 'selected' : ''}><input type="checkbox" aria-label={`Select ${row.kind} on sheet ${row.page + 1}`} checked={selected.includes(row.id)} onChange={() => select(row.id, true)} /><button onClick={() => { setTool('Select'); select(row.id); if (row.source === 'annotation') controller.reveal(row.id); else {
@@ -305,8 +323,10 @@ export function ReviewWorkspace({ viewer, bus, state, controller, active, toolba
             viewer.scrollPageIntoView({ pageNumber: row.page + 1, destArray: rect ? [null, { name: 'XYZ' }, rect[0], rect[3] + 40, null] : undefined });
           } }}><strong>Sheet {row.page + 1} · {row.kind} · {row.meta.status}</strong><span>{row.meta.subject || row.text || 'No comment'}</span><small>{[row.meta.author, row.meta.discipline, data.layers?.find(l => l.id === row.meta.layer)?.name, !markVisible(data, row.id) ? 'Hidden' : '', row.meta.carriedFrom ? 'Carried forward — verify' : '', row.meta.locked ? 'Locked' : ''].filter(Boolean).join(' · ')}</small></button></li>)}</ul>
         <div className="review-actions"><button onClick={() => onExport('csv')}>Export CSV</button><button onClick={() => onExport('pdf')}>Review report</button><button onClick={onFlatten}>Save flattened copy…</button></div>
-      </details>
-      {!rows.length && panel === 'comments' && <p>No comments yet. Choose Add a comment, then click the drawing.</p>}
+      </section>
+        {!rows.length && <p>No comments yet. Choose Add a comment, then click the drawing.</p>}
+      </>}
+      <footer className="review-panel-footer"><button onClick={() => controller.undoDrawing()} title={keys('Undo review edit (Ctrl+Z)')}>Undo</button><button onClick={() => controller.undoDrawing(true)}>Redo</button></footer>
       <p role="status">{message}</p>
     </aside>}
   </>;

@@ -4,7 +4,7 @@ import type { ReviewKind } from './reviewModel';
 import type { MeasureKind } from './measurements';
 
 export type DrawingTool = ReviewKind | 'Select' | 'Comment';
-export type ReviewPanel = 'comments' | 'properties' | 'layers' | 'tools';
+export type ReviewPanel = 'comments' | 'style' | 'details' | 'layers' | 'tools' | 'arrange';
 export type MeasureTool = MeasureKind | 'Calibrate';
 const markupTools: [DrawingTool, IconName][] = [
   ['Select', 'cursor'], ['Comment', 'note'], ['Arrow', 'arrow'], ['Callout', 'callout'],
@@ -12,10 +12,10 @@ const markupTools: [DrawingTool, IconName][] = [
   ['Oval', 'oval'], ['Line', 'line'], ['Polygon', 'polygon'], ['Stamp', 'stamp'],
 ];
 interface Props {
-  tool: string; hint: string; message: string; color: string; count: number; drawing: boolean;
+  tool: string; hint: string; message: string; count: number; drawing: boolean;
   onTool: (tool: DrawingTool) => void; onMeasure: (tool: MeasureTool) => void;
   onNative: (tool: 'highlight' | 'ink' | 'sign') => void; onPanel: (panel: ReviewPanel) => void;
-  onColor: (color: string) => void; onUndo: (redo?: boolean) => void; onCancel: () => void;
+  onUndo: (redo?: boolean) => void; onCancel: () => void;
   onFinish: () => void; onCompare: () => void; onCarry: () => void;
   onExport: (format: 'csv' | 'pdf') => void; onFlatten: () => void; onSave: () => void; onClose: () => void;
 }
@@ -50,13 +50,15 @@ export function ReviewToolbar(p: Props) {
         {button('Highlight', 'highlight', () => p.onNative('highlight'), p.tool === 'highlight')}
         {button('Freehand', 'pen', () => p.onNative('ink'), p.tool === 'ink')}
         {button('Sign', 'signature', () => p.onNative('sign'))}
-      </div><div className="drawing-quick-style"><label>Color <input type="color" aria-label="Markup color" value={p.color} disabled={!markupTools.some(([tool]) => tool === p.tool)} onChange={e => p.onColor(e.target.value)} /></label><button onClick={() => p.onPanel('properties')}><Icon name="settings" size={15} /> Properties</button></div></>}
+      </div><div className="drawing-quick-style"><button onClick={() => p.onPanel('style')}><Icon name="settings" size={15} /> Style</button><button onClick={() => p.onPanel('details')}><Icon name="info" size={15} /> Review details</button></div></>}
       {tab === 'Measure' && <><p className="drawing-tool-intro">Calibrate the sheet, then measure.</p><div className="drawing-tool-grid" role="group" aria-label="Measurement tools">{(['Calibrate', 'Length', 'Area', 'Perimeter', 'Count'] as const).map((t, i) => button(t, (['ruler', 'fitWidth', 'rectangle', 'polygon', 'grid'] as const)[i], () => p.onMeasure(t), p.tool === t))}</div></>}
       {tab === 'Review' && <div className="drawing-tool-grid drawing-review-grid" role="group" aria-label="Review actions">
         {button('Comments', 'note', () => p.onPanel('comments'))}
         {button('Layers', 'copy', () => p.onPanel('layers'))}
         {button('Tool chest', 'stamp', () => p.onPanel('tools'))}
-        {button('Properties', 'settings', () => p.onPanel('properties'))}
+        {button('Style', 'settings', () => p.onPanel('style'))}
+        {button('Review details', 'info', () => p.onPanel('details'))}
+        {button('Arrange', 'cursor', () => p.onPanel('arrange'))}
         {button('Compare revisions', 'grid', p.onCompare)}
         {button('Carry comments', 'copy', p.onCarry)}
         {button('Export CSV', 'list', () => p.onExport('csv'))}
