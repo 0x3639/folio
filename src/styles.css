@@ -1517,10 +1517,14 @@ kbd {
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────── */
-/* Keep the tools clear of the native window controls at the minimum desktop width. */
-@media (max-width: 540px) {
+/* Reserve native window-control space on the first row; tools use the full second row. */
+@media (max-width: 900px) {
   .desktop .app:has(.topbar-center .segmented) { --topbar-h: 88px; }
-  .desktop .topbar:has(.segmented) { flex-wrap: wrap; align-content: center; }
+  .desktop .app .topbar:has(.segmented) { display: flex; flex-wrap: wrap; align-content: center; gap: 2px 4px; padding: 0 4px; }
+  .desktop .topbar:has(.segmented) .topbar-left { flex: 1; min-height: 48px; }
+  .desktop .topbar:has(.segmented) .topbar-right { flex: 1; min-height: 48px; padding-right: 146px; }
+  .desktop.platform-darwin .topbar:has(.segmented) .topbar-left { padding-left: 80px; }
+  .desktop.platform-darwin .topbar:has(.segmented) .topbar-right { padding-right: 10px; }
   .desktop .topbar-center:has(.segmented) {
     order: 1;
     flex-basis: 100%;
@@ -1529,7 +1533,7 @@ kbd {
   }
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1280px) {
   .segmented button span {
     display: none;
   }

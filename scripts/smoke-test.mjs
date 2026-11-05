@@ -248,11 +248,35 @@ try {
   console.log("ok  document tabs keep signatures and pages, confirm discard, and open multiple files");
 
   const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  // Exercise every platform's window-control spacing, including just above each breakpoint.
+  try {
+    for (const layout of ['darwin', 'win32', 'linux']) {
+      await page.evaluate(layout => {
+        const classes = document.documentElement.classList;
+        for (const name of [...classes]) if (name.startsWith('platform-')) classes.remove(name);
+        classes.add(`platform-${layout}`);
+      }, layout);
+      for (const width of [420, 540, 541, 760, 761, 900, 901, 1080, 1081, 1280, 1281]) {
+        await page.window.setViewportSize({ width, height: viewport.height });
+        const covered = await page.locator('.topbar button').evaluateAll(buttons => buttons.flatMap(button => {
+          const rect = button.getBoundingClientRect();
+          const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          const clearsWindowControls = !button.closest('.segmented') || innerWidth > 900 || rect.top >= 51;
+          return button.contains(hit) && rect.left >= 0 && rect.right <= innerWidth && clearsWindowControls ? [] : [button.getAttribute('aria-label') || button.textContent];
+        }));
+        assert.deepEqual(covered, [], `toolbar controls must remain reachable on ${layout} at ${width}px`);
+        if (width === 420) await page.screenshot({ path: path.join(shots, `toolbar-narrow-${layout}.png`) });
+      }
+    }
+  } finally {
+    await page.evaluate(platformClass => {
+      const classes = document.documentElement.classList;
+      for (const name of [...classes]) if (name.startsWith('platform-')) classes.remove(name);
+      classes.add(platformClass);
+    }, platformClass);
+  }
+  console.log("ok  toolbar controls stay reachable across all platform layouts and responsive breakpoints");
   await page.window.setViewportSize({ width: 420, height: viewport.height });
-  assert.ok(await page.locator(".topbar button").evaluateAll(buttons => buttons.every(button => {
-    const rect = button.getBoundingClientRect();
-    return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
-  })), "a toolbar button is covered at the minimum width");
   await page.getByRole("button", { name: "Highlight", exact: true }).click();
   await page.window.setViewportSize(viewport);
   const textLayer = page.locator('.page[data-page-number="1"] .textLayer.highlighting');

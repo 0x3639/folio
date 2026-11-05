@@ -1251,18 +1251,18 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
                   <span>{t.label}</span>
                 </button>
               ))}
-              <button aria-label="Measure" aria-pressed={measuring} className={measuring ? "on" : ""} onClick={async () => {
+              <button aria-label="Measure" title="Measure drawings" aria-pressed={measuring} className={measuring ? "on" : ""} onClick={async () => {
                 if (!doc || doc.password || await doc.pdf.getPermissions() || (await doc.pdf.getSignatures())?.length) {
                   flash("Measurements require an unsigned, unencrypted PDF."); return;
                 }
                 if (await chooseTool("select")) setMeasuring(true);
-              }}>Measure</button>
+              }}><Icon name="ruler" size={16} /><span>Measure</span></button>
               <button aria-label="Markup" title="Drawing markup and review tools" aria-pressed={drawingToolbar} className={reviewing ? 'on' : ''} onClick={async () => {
                 try {
                   if (!doc || doc.password || await doc.pdf.getPermissions() || (await doc.pdf.getSignatures())?.length) { flash('Drawing review requires an unsigned, unencrypted PDF.'); return; }
                   if (await chooseTool('select')) { setReviewing(true); setDrawingToolbar(true); }
                 } catch { flash('Could not open drawing review for this document.'); }
-              }}><Icon name="callout" size={16} />Markup</button>
+              }}><Icon name="callout" size={16} /><span>Markup</span></button>
               <button onClick={startSigning} aria-label="Sign" title="Add a signature"><Icon name="signature" size={16} /><span>Sign</span></button>
               <button className={contentEditing ? "on edit-mode-toggle" : "edit-mode-toggle"} aria-pressed={contentEditing}
                 aria-label={contentEditing ? "Exit edit mode" : "Edit mode"} title={contentEditing ? "Exit edit mode" : "Edit existing text and images"}
