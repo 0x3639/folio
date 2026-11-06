@@ -8,6 +8,13 @@ interface UpdateStatus {
 
 // Present only when Folio runs as the desktop app (see electron/preload.cjs).
 interface FolioDesktop {
+  signing: {
+    chooseIdentity(): Promise<{ token: string; name: string } | null>;
+    unlock(token: string, password: string): Promise<DigitalCertificate>;
+    clear(token: string): Promise<void>;
+    inspect(bytes: Uint8Array): Promise<SignatureVerification>;
+    save(request: { identity: string; bytes: Uint8Array; name: string; page: number; rect: number[] | null; reason: string; lock: boolean; timestamp: boolean }): Promise<{ name: string; bytes: Uint8Array; verification: SignatureVerification } | null>;
+  };
   /** `note` says where a converted Word document's PDF was saved. */
   onOpenFile(callback: (name: string, data: Uint8Array, note?: string, token?: string) => void): () => void;
   onConverting(callback: (name: string, token: string) => void): () => void;
@@ -32,6 +39,14 @@ interface FolioDesktop {
   getAutoUpdateEnabled(): Promise<boolean>;
   setAutoUpdateEnabled(enabled: boolean): Promise<boolean>;
   ai: FolioAi;
+}
+
+interface DigitalCertificate {
+  name: string; subject: string; issuer: string; fingerprint: string; validFrom: string; validTo: string;
+}
+interface SignatureVerification {
+  signatures: { field: string; name: string; integrity: boolean; coversCurrentFile: boolean; signedLength: number; timestamp: boolean; error: string }[];
+  locked: boolean; certified: boolean; unsignedChanges: boolean; trust: 'not-checked';
 }
 
 interface AiStatus {

@@ -18,14 +18,18 @@
     "smoke:review": "node scripts/smoke-review-test.mjs",
     "smoke": "node scripts/smoke-test.mjs",
     "test:pdf-compatibility": "node scripts/test-pdf-compatibility.mjs",
+    "test:digital-signatures": "node scripts/test-digital-signatures.mjs",
     "test:drawing-review": "node scripts/test-drawing-review.mjs",
     "test:measurements": "node scripts/test-measurements.mjs",
     "test:chat-math": "node scripts/test-chat-math.mjs"
   },
   "dependencies": {
+    "@libpdf/core": "0.5.3",
+    "asn1js": "3.0.10",
     "electron-updater": "^6.8.11",
     "jszip": "^3.10.2",
-    "mammoth": "^1.13.0"
+    "mammoth": "^1.13.0",
+    "pkijs": "3.4.0"
   },
   "devDependencies": {
     "@embedpdf/pdfium": "2.15.1",

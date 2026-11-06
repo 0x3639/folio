@@ -15,7 +15,7 @@ import {
   ScrollMode,
   SpreadMode,
 } from "./viewer";
-import { AnnotationEditorParamsType, AnnotationEditorType } from "pdfjs-dist";
+import { AnnotationEditorParamsType, AnnotationEditorType, PermissionFlag } from "pdfjs-dist";
 import { loadPdf, reorderPdf, thumbnailDataUrl, type PDFDocumentProxy } from "./pdf";
 import { contentKey, getRecent, MAX_RECENT_FILE_BYTES, removeRecent, saveRecent, updateLastPage } from "./recent";
 import { readPdfBlob, readPdfResponse } from "./pdfInput";
@@ -42,6 +42,8 @@ import { ZoomMenu } from "./ZoomMenu";
 import { SearchBar, type FindResult } from "./SearchBar";
 import { AboutDialog, InfoDialog, OpenUrlDialog, PasswordDialog, ShortcutsDialog, parseWebUrl } from "./Dialogs";
 import { SignatureDialog } from "./SignatureDialog";
+import { DigitalSignatureDialog } from './DigitalSignatureDialog';
+import { Modal } from './Dialogs';
 import { ContentEditor, type ContentEditorHandle, type NextSelection } from "./ContentEditor";
 import { VersionHistoryPanel } from "./VersionHistoryPanel";
 import { saveVersion, type PdfChange } from "./versionHistory";
@@ -100,6 +102,7 @@ interface OpenDoc {
   /** The file's size; its bytes live in pdf.js's worker (pdf.getData()) rather than in a second copy here. */
   size: number;
   pdf: PDFDocumentProxy;
+  signed?: boolean;
   /** Used only in memory when reopening an annotated snapshot for page reordering. */
   password?: string;
   /** Original library entry while content edits are held in memory. */
@@ -214,6 +217,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
   const [error, setError] = useState<string | null>(null);
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
+  const [signChoice, setSignChoice] = useState(false), [digitalSigning, setDigitalSigning] = useState(false);
   const [signatureTargets, setSignatureTargets] = useState<SignatureTarget[]>([]);
   const [signatureDismissed, setSignatureDismissed] = useState(false);
   const [markup, setMarkup] = useState<MarkupState>({ marks: [], note: "", bookmarkedPages: null });
@@ -230,14 +234,15 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
   const [aiContext, setAiContext] = useState<AiContext | null>(null);
 
   useLayoutEffect(() => {
-    if (active && window.folioDesktop && !focus && !dialog && !signing && !pending && !imageView) {
+    if (active && window.folioDesktop && !focus && !dialog && !signing && !digitalSigning && !signChoice && !pending && !imageView) {
       return trackTitlebar(headerRef.current!);
     }
-  }, [active, doc, focus, dialog, signing, pending, imageView]);
+  }, [active, doc, focus, dialog, signing, digitalSigning, signChoice, pending, imageView]);
 
   useEffect(() => {
+    setSignChoice(false); setDigitalSigning(false);
     setSigning(false); setSignatureTargets([]); setSignatureDismissed(false);
-    if (!doc || contentEditing) return;
+    if (!doc || doc.signed || contentEditing) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       void detectSignatureTargets(doc.pdf, page).then(targets => {
@@ -274,6 +279,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
       linkService,
       findController,
       annotationEditorMode: AnnotationEditorType.NONE,
+      enablePermissions: true,
       annotationEditorHighlightColors: HIGHLIGHTS.map((c) => `${c.name.toLowerCase()}=${c.hex}`).join(","),
       // Records where images are drawn (used to keep them true to color in night reading). The huge
       // minimum size turns off pdf.js's own right-click image targets, which Folio doesn't use.
@@ -377,7 +383,8 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
         let pdf = await loadPdf(data, signal, password);
         unattached = pdf;
         let importedDrawing: import('./measurements').DrawingData | undefined;
-        if (!password && !(await pdf.getSignatures())?.length) {
+        const signed = !!(await pdf.getSignatures())?.length;
+        if (!password && !signed) {
           const { importDrawingPdf } = await import('./drawingPdf');
           const imported = await importDrawingPdf(data).catch(() => ({ bytes: data, drawing: undefined }));
           signal.throwIfAborted();
@@ -412,7 +419,15 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
         }
 
         const prev = docRef.current;
-        const next: OpenDoc = { id, name, size: data.byteLength, pdf, password, sourceId: revision?.sourceId ?? revision?.id, historyAllowed, edits };
+        const next: OpenDoc = { id, name, size: data.byteLength, pdf, password, signed, sourceId: revision?.sourceId ?? revision?.id, historyAllowed, edits };
+        if (signed) {
+          // Folio's read-only policy for signed files: pdf.js renders form appearances
+          // and creates no annotation editors. The original PDF permissions stay untouched.
+          const permissions = await pdf.getPermissions();
+          const readOnly = new Set([PermissionFlag.PRINT, PermissionFlag.PRINT_HIGH_QUALITY, PermissionFlag.COPY, PermissionFlag.COPY_FOR_ACCESSIBILITY]
+            .filter(flag => !permissions || permissions.has(flag)));
+          pdf.getPermissions = async () => readOnly;
+        }
         docRef.current = next;
         // Password-protected documents aren't stored by Folio (same rule as Recent).
         const reading = previous ? markupRef.current!.state : undefined;
@@ -420,7 +435,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
           const bookmarks = new Set(reading.bookmarkedPages);
           reading.bookmarkedPages = exportedOrder.flatMap((n, i) => bookmarks.has(n) ? [i + 1] : []);
         }
-        persistRef.current = !password && !revision;
+        persistRef.current = !password && !revision && !signed;
         void markupRef.current!.load(id, persistRef.current, reading, importedDrawing);
         setNoteBox(null);
         setPinned(null);
@@ -615,6 +630,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
   };
 
   const chooseTool = async (next: Tool, editContent = false) => {
+    if (docRef.current?.signed && (next !== 'select' || editContent)) { flash('Digitally signed PDF: editing is disabled to preserve its signatures.'); return false; }
     if (contentRef.current && !(await contentRef.current.finish())) return false;
     const v = viewerRef.current!;
     if (!v.pdfDocument) return false;
@@ -633,7 +649,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
     } catch { flash("Annotations aren’t supported for this document"); return false; }
   };
   const leaveEditMode = () => chooseTool("select");
-  const startSigning = async () => { if (await chooseTool("select")) setSigning(true); };
+  const startSigning = async () => { if (await chooseTool("select")) setSignChoice(true); };
 
   useEffect(() => {
     if (!doc || tool !== "ink" || drawTool === "Pen") return;
@@ -651,7 +667,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
   };
 
   // ── Highlights and notes ────────────────────────────────────────────
-  const liveSelection = useTextSelection(container, !!doc && !contentEditing && tool === "select" && !signing && !noteBox, doc?.pdf);
+  const liveSelection = useTextSelection(container, !!doc && !contentEditing && tool === "select" && !signing && !digitalSigning && !signChoice && !noteBox, doc?.pdf);
   // Typing in the popover's note field clears the page selection, so the popover keeps its own copy.
   const selection = pinned ?? liveSelection;
   const highlightColor = colors.highlight ?? HIGHLIGHTS[0].hex;
@@ -659,6 +675,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
   toolRef.current = tool;
 
   const quickHighlight = async (hex: string, note = "") => {
+    if (docRef.current?.signed) { flash('Digitally signed PDF: editing is disabled to preserve its signatures.'); return; }
     const info = selection;
     if (!info) return;
     setColors((c) => ({ ...c, highlight: hex }));
@@ -815,6 +832,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
 
   const currentBytes = async (doc = docRef.current, order = pageOrder, flatten = false) => {
     if (!doc || exporting.current === doc.pdf) return null;
+    if (doc.signed) return { bytes: await doc.pdf.getData(), annotated: false };
     exporting.current = doc.pdf;
     const signal = opening.current!.signal;
     // Marks on pages that haven't been drawn yet aren't in pdf.js's annotation storage; add them for this copy only.
@@ -1042,7 +1060,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
       if (e.ctrlKey && e.key === "Tab") {
         e.preventDefault(); tabs.cycle(e.shiftKey ? -1 : 1); return;
       }
-      if (signing) return;
+      if (signing || digitalSigning || signChoice) return;
       const target = e.target as HTMLElement;
       const typing = target.closest("input, textarea, select, [contenteditable=true], .freeTextEditor");
 
@@ -1168,7 +1186,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
     };
     // Pasting a link (outside text fields) fills in Open from URL too.
     const paste = (e: ClipboardEvent) => {
-      if (signing || (e.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable=true], .freeTextEditor")) return;
+      if (signing || digitalSigning || signChoice || (e.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable=true], .freeTextEditor")) return;
       const url = parseWebUrl(e.clipboardData?.getData("text/plain"));
       if (!url) return;
       e.preventDefault();
@@ -1190,7 +1208,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
       window.removeEventListener("dragover", over);
       window.removeEventListener("drop", drop);
     };
-  }, [openFiles, signing]);
+  }, [openFiles, signing, digitalSigning, signChoice]);
 
   const runFind = (query: string, opts: { again?: boolean; previous?: boolean; caseSensitive?: boolean; entireWord?: boolean }) =>
     busRef.current!.dispatch("find", {
@@ -1318,7 +1336,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
             bookmarkedPages={markup.bookmarkedPages}
             onToggleBookmark={n => markupRef.current!.toggleBookmark(n)}
             order={pageDraft?.order ?? null}
-            onOrder={order => setPageDraft(order ? { order } : null)}
+            onOrder={order => { if (doc.signed) flash('Digitally signed PDF: page changes are disabled.'); else setPageDraft(order ? { order } : null); }}
             onSaveOrder={download}
             onOpenCopy={pageDraft?.copy ? () => {
               tabs.open([{ kind: "bytes", name: copyName, data: pageDraft.copy!, password: doc.password }]);
@@ -1343,6 +1361,7 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
         )}
 
         <main className="stage">
+          {doc?.signed && <div className="signed-document-banner" role="status"><span>Digitally signed PDF · Read-only in Folio</span><button onClick={() => setDigitalSigning(true)}>Signature details</button></div>}
           <div ref={containerRef} className="viewer-container" tabIndex={-1}
             onInput={event => {
               // Form values live in the PDF until a copy is saved. Folio only auto-saves its own markup.
@@ -1350,10 +1369,10 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
             }}>
             <div ref={innerRef} className="pdfViewer" />
           </div>
-          {doc && viewerRef.current && busRef.current && <Measurements key={doc.id} viewer={viewerRef.current} bus={busRef.current}
+          {doc && viewerRef.current && busRef.current && <Measurements key={'measure:' + doc.id} viewer={viewerRef.current} bus={busRef.current}
             active={measuring && !contentEditing} page={page} requestedTool={measureRequest} onModeChange={setMeasureTool} data={markup.drawing}
             onChange={drawing => { markupRef.current!.setDrawing(drawing); if (!persistRef.current) setDirty(true); }} onClose={() => setMeasuring(false)} />}
-          {doc && viewerRef.current && busRef.current && markupRef.current && <ReviewWorkspace key={doc.id} viewer={viewerRef.current} bus={busRef.current} state={markup} controller={markupRef.current}
+          {doc && viewerRef.current && busRef.current && markupRef.current && <ReviewWorkspace key={'review:' + doc.id} viewer={viewerRef.current} bus={busRef.current} state={markup} controller={markupRef.current}
             active={reviewing && !contentEditing} toolbarVisible={drawingToolbar && !contentEditing} otherTool={measuring ? measureTool : tool === 'select' ? 'Select' : tool}
             onActivate={async () => { if (!await chooseTool('select')) return false; setReviewing(true); return true; }}
             onMeasure={async mode => { if (await chooseTool('select')) { setMeasureRequest(r => ({ tool: mode, sequence: (r?.sequence ?? 0) + 1 })); setMeasuring(true); } }}
@@ -1582,7 +1601,18 @@ export default function App({ tabs, tabKey, upgradeNotes }: { tabs: DocumentTabs
       {dialog === "upgrade" && <ChangelogDialog upgradeNotes={upgradeNotes} onClose={() => setDialog(null)} />}
       {doc && imageView && <ImageViewer pdf={doc.pdf} target={imageView} onClose={() => setImageView(null)} />}
       {dialog === "url" && <OpenUrlDialog key={linkDraft} initial={linkDraft} onClose={() => setDialog(null)} onSubmit={(url) => { setDialog(null); tabs.open([{ kind: "url", name: new URL(url).hostname, url }]); }} />}
-      {doc && signing && <SignatureDialog key={doc.id + ":" + page} pdf={doc.pdf} pageNumber={page} targets={signatureTargets}
+      {doc && signChoice && <Modal title="Sign PDF" onClose={() => setSignChoice(false)}><div className="sign-choice">
+        <button className="btn" disabled={doc.signed} onClick={() => { setSignChoice(false); setSigning(true); }}>Add handwritten signature</button><p>Place a signature image on the page.</p>
+        <button className="btn primary" onClick={() => { setSignChoice(false); setDigitalSigning(true); }}>Digitally sign or lock PDF</button><p>Use a certificate to sign the PDF and optionally lock it against further changes.</p>
+      </div></Modal>}
+      {doc && digitalSigning && <DigitalSignatureDialog key={doc.id + ':' + page} pdf={doc.pdf} name={doc.name} pageNumber={page} signed={!!doc.signed}
+        onClose={() => setDigitalSigning(false)} getBytes={async () => {
+          if (pageOrder) throw new Error('Save and open the reordered copy before signing it.');
+          const copy = await currentBytes();
+          if (!copy || docRef.current !== doc) throw new Error('The document changed. Open Sign again.');
+          return copy.bytes;
+        }} onSaved={(name, bytes) => { tabs.open([{ kind: 'bytes', name, data: bytes }]); flash('Signed PDF saved. Opened the finalized copy for review.'); }} />}
+      {doc && signing && !doc.signed && <SignatureDialog key={doc.id + ":" + page} pdf={doc.pdf} pageNumber={page} targets={signatureTargets}
         onClose={() => setSigning(false)} onApprove={async (signature, rect) => {
           await placeSignature(viewerRef.current!, doc.pdf, page, signature, rect);
           setDirty(true); setSignatureDismissed(true); flash(keys("Signature added. Ctrl+Z to undo; Save copy to export."));

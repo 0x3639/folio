@@ -16,7 +16,7 @@ func load(_ name: String) -> PDFDocument {
     return document
 }
 
-func render(_ document: PDFDocument, _ number: Int) -> [UInt8] {
+func render(_ document: PDFDocument, _ number: Int, thumbnail: Bool = false) -> [UInt8] {
     guard let page = document.page(at: number),
           let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 600, pixelsHigh: 600,
               bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -25,9 +25,16 @@ func render(_ document: PDFDocument, _ number: Int) -> [UInt8] {
           let pixels = bitmap.bitmapData else { fail("could not prepare page \(number + 1)") }
     context.setFillColor(CGColor(gray: 1, alpha: 1))
     context.fill(CGRect(x: 0, y: 0, width: 600, height: 600))
-    let bounds = page.bounds(for: .cropBox)
-    context.scaleBy(x: 600 / bounds.width, y: 600 / bounds.height)
-    page.draw(with: .cropBox, to: context)
+    if thumbnail {
+        // PDFKit handles page rotation/cropping in its normal preview path.
+        let preview = page.thumbnail(of: NSSize(width: 600, height: 600), for: .cropBox)
+        guard let image = preview.cgImage(forProposedRect: nil, context: nil, hints: nil) else { fail("could not preview page") }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 600, height: 600))
+    } else {
+        let bounds = page.bounds(for: .cropBox)
+        context.scaleBy(x: 600 / bounds.width, y: 600 / bounds.height)
+        page.draw(with: .cropBox, to: context)
+    }
     context.flush()
     return Array(UnsafeBufferPointer(start: pixels, count: 600 * 2400))
 }
@@ -59,3 +66,12 @@ let unicodeDifferences = stride(from: 0, to: unicode.count, by: 4).filter { pixe
 }.count
 if unicodeDifferences >= 600 { fail("embedded Unicode text differs from its flattened appearance") }
 print("PASS macOS PDFKit renders all 14 markup/measurement fixtures consistently with flattened copies, including rotated/cropped pages, Unicode fonts and hidden layers")
+
+for name in ["digital-signed-locked.pdf", "digital-signed-twice.pdf", "digital-signed-rotated.pdf"] {
+    let document = load(name)
+    guard document.pageCount == 2 else { fail("signed PDF has unexpected pages") }
+    let pixels = render(document, 1, thumbnail: true)
+    let ink = stride(from: 0, to: pixels.count, by: 4).filter { pixel in (0..<3).contains { pixels[pixel + $0] < 200 } }.count
+    if ink < 700 { fail("signed PDF has no visible signature appearance: \(name)") }
+}
+print("PASS macOS PDFKit opens digitally signed and certified PDFs and renders signature appearances, including rotated/cropped sheets")

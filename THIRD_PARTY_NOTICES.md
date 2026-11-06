@@ -10,6 +10,7 @@ they cover, and Electron's and Chromium's licenses are in the app's installation
 | [pdf.js](https://github.com/mozilla/pdf.js) (`pdfjs-dist`) | Apache-2.0 | Mozilla Foundation |
 | [EmbedPDF PDFium](https://github.com/embedpdf/embed-pdf-viewer/tree/main/packages/pdfium) and [pdf-lib](https://github.com/Hopding/pdf-lib) (content editing) | MIT wrappers, PDFium and bundled dependency notices in `pdfjs/editor-licenses/` | EmbedPDF, PDFium and pdf-lib contributors |
 | [@pdf-lib/fontkit](https://github.com/Hopding/fontkit) (international review-note fonts) | MIT | Andrew Dillon, Devon Govett and contributors |
+| [LibPDF](https://github.com/LibPDF-js/core), [PKI.js](https://github.com/PeculiarVentures/PKI.js), and [ASN1.js](https://github.com/PeculiarVentures/ASN1.js) (digital PDF signatures) | MIT, BSD-3-Clause; dependencies under MIT, BSD-3-Clause, 0BSD, Zlib and ISC | LibPDF, Peculiar Ventures and dependency contributors; notices in `pdfjs/signing-licenses/` |
 | [Tesseract.js](https://github.com/naptha/tesseract.js), its WebAssembly core and [English recognition model](https://github.com/tesseract-ocr/tessdata_best) | Apache-2.0, worker dependency notices in `ocr/worker.min.js.LICENSE.txt` | Tesseract.js and Tesseract OCR contributors |
 | pdf.js JBIG2 decoder (from PDFium) | BSD-3-Clause | The PDFium Authors |
 | pdf.js OpenJPEG decoder | BSD-2-Clause | OpenJPEG contributors |

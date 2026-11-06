@@ -213,6 +213,7 @@ export async function checkDrawingReview(app, page, output) {
   const clickPdf = (px, py) => page.mouse.click(vb.x + px / 400 * vb.width, vb.y + (400 - py) / 400 * vb.height);
   // Give the vector operator list time to arrive; the UI uses the cached list for subsequent clicks.
   await page.waitForTimeout(250);
+  assert.equal(await measures.count(), 1, 'one measurement workspace after changing documents');
   await clickPdf(51, 101); await clickPdf(149, 99);
   await page.waitForFunction(() => document.querySelector('[aria-label="Measurement tool"]').value === 'Length');
   await measures.getByLabel('Snap to drawing endpoints').uncheck();

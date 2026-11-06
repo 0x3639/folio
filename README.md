@@ -210,6 +210,8 @@ The editor works with unsigned, unencrypted PDFs.
 
 Choose **Sign** in the toolbar to add a signature.
 
+Choose **Add handwritten signature** for a visual signature, or **Digitally sign or lock PDF** for certificate signing.
+
 - **Capture on paper:** sign with dark ink on white paper, then use your camera or upload a PNG, JPEG, or WebP photo.
 - **Clean up the image:** crop to the signature and adjust ink sensitivity to remove the paper background. Capture
   and image processing stay on your device.
@@ -222,6 +224,30 @@ Choose **Sign** in the toolbar to add a signature.
   of Folio's automatic annotation restoration.
 - **Optional reuse:** choose to remember a signature on this computer; remove the saved image in
   **Settings → Signature → Forget**.
+
+### Digitally sign and lock PDFs
+
+In the desktop app, choose **Sign → Digitally sign or lock PDF**, select a `.p12` or `.pfx` digital ID,
+and unlock it with its password. Review the certificate, reason, and signature placement, then save a separate signed copy.
+The certificate's private key and password stay on your computer; Folio does not save them to preferences or logs.
+
+- **Lock PDF after signing** certifies an unsigned PDF with the standard no-changes permission (DocMDP P=1).
+  Finish all edits and form filling first: this disallows further signatures too.
+- Without locking, Folio adds an approval signature. Additional approval signatures are appended without changing
+  earlier signed bytes. Certification locking requires an unsigned original; Folio does not replace an existing signature.
+- **Request a timestamp from DigiCert** optionally sends only the signature digest to DigiCert's HTTP RFC 3161 service.
+  Folio checks the returned timestamp's cryptographic signature and matching digest before embedding it.
+  Signing fails if the timestamp request fails. Otherwise the signing time comes from this computer's clock.
+- Folio opens signed files read-only and preserves their exact bytes when saving copies. **Signature details** checks
+  cryptographic integrity and reports later unsigned bytes. Certificate-chain trust, revocation, and timestamp trust
+  must be validated in Acrobat or another signature-validation viewer; Folio does not label these as verified.
+- Uses standard SHA-256 CMS/CAdES detached signatures and PDF signature widgets. Independent OpenSSL and Poppler
+  checks validate the signatures; PDFium and macOS PDFKit check the visible PDF. Not every viewer verifies signatures.
+  Direct Acrobat/Bluebeam application validation remains a manual release check.
+
+A digital signature makes unauthorized changes detectable; it cannot prevent someone making an unsigned copy.
+Recipients should check the digital signature status, not just its visible image. Encrypted or already certified PDFs
+are preserved unchanged; use an unsigned, unencrypted original to certify a new version.
 
 ### Ask AI about a document
 

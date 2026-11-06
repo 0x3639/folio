@@ -7,6 +7,7 @@ import path from 'node:path';
 import { readerPage } from './reader-page.mjs';
 import { checkMarkupToolbar } from './smoke-markup-toolbar.mjs';
 import { checkDrawingReview } from './smoke-drawing-review.mjs';
+import { checkDigitalSigning } from './smoke-digital-signatures.mjs';
 const root = path.resolve(import.meta.dirname, '..'), output = path.join(root, 'release', 'smoke');
 mkdirSync(output, { recursive: true });
 const require = createRequire(import.meta.url);
@@ -19,8 +20,11 @@ page.on('pageerror', e => errors.push(String(e)));
 try {
   await page.getByRole('button', { name: /Try a sample/ }).click();
   await page.locator('.textLayer span:not(.markedContent)').first().waitFor();
-  await checkDrawingReview(app, page, output);
-  await checkMarkupToolbar(app, page, output);
+  if (!process.argv.includes('--digital-only')) {
+    await checkDrawingReview(app, page, output);
+    await checkMarkupToolbar(app, page, output);
+  }
+  await checkDigitalSigning(app, page, output);
   assert.deepEqual(errors, []);
 } catch (error) {
   await page.screenshot({ path: path.join(output, 'review-failure.png') }).catch(() => {});

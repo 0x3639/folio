@@ -62,6 +62,7 @@ jobs:
           npm run test:measurements
           npm run test:drawing-review
           npm run test:pdf-compatibility
+          npm run test:digital-signatures
       - name: Apple PDF engine compatibility
         if: runner.os == 'macOS'
         run: swift -module-cache-path release/swift-module-cache scripts/test-pdfkit-compatibility.swift release/smoke

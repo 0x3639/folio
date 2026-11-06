@@ -28,6 +28,13 @@ contextBridge.exposeInMainWorld("folioDesktop", {
   openDocument: (file) => ipcRenderer.invoke("folio:open-document", webUtils.getPathForFile(file)),
   ready: () => ipcRenderer.invoke("folio:ready"),
   platform: process.platform,
+  signing: {
+    chooseIdentity: () => ipcRenderer.invoke('folio:signing-choose-id'),
+    unlock: (token, password) => ipcRenderer.invoke('folio:signing-unlock', token, password),
+    clear: token => ipcRenderer.invoke('folio:signing-clear', token),
+    inspect: bytes => ipcRenderer.invoke('folio:signing-inspect', bytes),
+    save: request => ipcRenderer.invoke('folio:signing-save', request),
+  },
   openDownload: () => ipcRenderer.invoke("folio:open-download"),
   /** Downloads a PDF from an http(s) link; resolves to { name, data: Uint8Array }, or null if the user said no. */
   async fetchPdf(url) {

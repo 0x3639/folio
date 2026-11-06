@@ -582,6 +582,7 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     createWindow();
+    require('./signing-ipc.cjs').register(handle, () => win, dialog);
     setupAutoUpdate();
   });
 

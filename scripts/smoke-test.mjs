@@ -157,6 +157,7 @@ try {
     return canvas.toDataURL("image/png").split(",")[1];
   });
   await page.getByTitle("Add a signature").click();
+  await page.getByRole('button', { name: 'Add handwritten signature', exact: true }).click();
   await page.locator('input[aria-label="Upload signature photo"]').setInputFiles({ name: "signature.png", mimeType: "image/png", buffer: Buffer.from(photo, "base64") });
   await page.getByRole("button", { name: /Use this signature/ }).click();
   await page.locator('select[aria-label="Signature placement"]').selectOption("manual");
